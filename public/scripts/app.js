@@ -1,0 +1,643 @@
+(() => {
+  const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const token = () => localStorage.getItem('token'), role = () => localStorage.getItem('role');
+  const page = document.body.dataset.page;
+  const cabinet = () => role() === 'admin' ? '/pages/admin.html' : '/pages/dashboard.html';
+  const when = s => new Date(s).toLocaleString('ru', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const ago = s => { const d = (Date.now() - new Date(s)) / 1000; return d < 60 ? 'только что' : d < 3600 ? Math.floor(d / 60) + ' мин назад' : d < 86400 ? Math.floor(d / 3600) + ' ч назад' : when(s); };
+  const card = i => `<div class="card vac">${i}</div>`;
+  const ST = { new: 'На рассмотрении', interview: 'Собеседование', offer: 'Оффер', accepted: 'Принято', declined: 'Отклонено' };
+  const GUARD = { dashboard: ['student', 'company'], profile: ['student'], vacancies: ['student'], company: ['company'], chat: ['student', 'company'],
+    support: ['student', 'company'], admin: ['admin'], account: ['student', 'company', 'admin'], verify: ['student', 'company', 'admin'], resume: ['student', 'company', 'admin'] };
+  const IC = {
+    reply: 'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM19 8v6M22 11h-6', invite: 'M12 2l3 6.5 7 .9-5.2 4.8 1.4 7L12 17.8 5.8 21.2l1.4-7L2 9.4l7-.9z',
+    chat: 'M21 12a8 8 0 01-11.6 7.1L3 21l1.9-6.2A8 8 0 1121 12z', ok: 'M20 6L9 17l-5-5', no: 'M18 6L6 18M6 6l12 12', bell: 'M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0',
+    home: 'M3 11l9-8 9 8v10a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1z', out: 'M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9',
+    sliders: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6', pending: 'M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z',
+    cal: 'M3 5h18v16H3zM8 3v4M16 3v4M3 10h18',
+    grid: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z', case: 'M3 7h18v13H3zM8 7V4h8v3', user: 'M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2M12 11a4 4 0 100-8 4 4 0 000 8z',
+    help: 'M12 22a10 10 0 100-20 10 10 0 000 20zM9.1 9a3 3 0 015.8 1c0 2-3 3-3 3M12 17h.01', shield: 'M12 2l8 3v6c0 5-3.5 9-8 11-4.5-2-8-6-8-11V5z', lock: 'M5 11h14v10H5zM8 11V7a4 4 0 018 0v4' };
+  IC.meet = IC.cal;
+  const icon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${IC[k]}"/></svg>`;
+  const NAV = {
+    student: [['dashboard', 'Обзор', '/pages/dashboard.html', 'grid'], ['vacancies', 'Вакансии', '/pages/vacancies.html', 'case'], ['chat', 'Чаты', '/pages/chat.html', 'chat']],
+    company: [['dashboard', 'Обзор', '/pages/dashboard.html', 'grid'], ['company', 'Кабинет', '/pages/company.html', 'case'], ['chat', 'Чаты', '/pages/chat.html', 'chat']],
+    admin: [['admin', 'Админ-панель', '/pages/admin.html', 'shield']]
+  };
+
+  async function api(url, o = {}) {
+    const r = await fetch(url, {
+      method: o.method || 'GET',
+      headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: 'Bearer ' + token() } : {}) },
+      body: o.body ? JSON.stringify(o.body) : undefined
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 401 && token()) { localStorage.removeItem('token'); localStorage.removeItem('role'); if (d.error && d.error !== 'Требуется вход') sessionStorage.setItem('flash', d.error); location.href = '/pages/login.html'; }
+    if (!r.ok) { const e = new Error(d.error || (r.status === 404 || r.status === 405 ? 'Сервер не знает этого запроса — замените файлы в server/ и перезапустите сервер' : 'Что-то пошло не так')); e.code = d.code; throw e; }
+    return d;
+  }
+  let tt;
+  function toast(msg) {
+    let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
+    t.textContent = msg; requestAnimationFrame(() => t.classList.add('show'));
+    clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), 3200);
+  }
+  const fail = e => { toast(e.message); if (e.code === 'unverified' || e.code === 'unapproved') setTimeout(() => location.href = e.code === 'unverified' ? '/pages/verify.html' : '/pages/support.html', 1500); };
+  const hashIn = list => list.includes(location.hash.slice(1)) ? location.hash.slice(1) : list[0];
+  const boom = e => { const r = e.target.getBoundingClientRect(); window.burst?.(r.left + r.width / 2, r.top + r.height / 2); };
+  const tagsOf = v => [v.city, v.format, v.category, v.paid ? 'Оплачиваемо' : null].filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('');
+  const matchRow = v => v.match == null ? '' : `<div class="mrow"><span class="mpill ${v.match >= 70 ? 'hi' : ''}" style="--v:${v.match}"><b>${v.match}%</b> совпадение</span>${(v.why || []).map(w => `<span class="tag why">${esc(w)}</span>`).join('')}</div>`;
+  const bub = m => `<div class="msg ${m.mine ? 'me' : ''}"><p>${esc(m.text)}</p><small>${when(m.created_at)}</small></div>`;
+  const mkPane = (el, url, empty) => {
+    let last = 0;
+    return async reset => {
+      const d = await api(`${url}${url.includes('?') ? '&' : '?'}after=${reset ? 0 : last}`);
+      if (reset) { el.innerHTML = ''; last = 0; }
+      if (d.items.length) {
+        const near = reset || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+        el.querySelector('.empty')?.remove(); el.insertAdjacentHTML('beforeend', d.items.map(bub).join(''));
+        last = d.items[d.items.length - 1].id; if (near) el.scrollTop = el.scrollHeight;
+      } else if (reset) el.innerHTML = empty;
+      return d;
+    };
+  };
+  const initTabs = onShow => {
+    const panes = {}; $$('[data-pane]').forEach(p => panes[p.dataset.pane] = p);
+    const names = Object.keys(panes), tabs = $$('.tab');
+    const show = () => { const n = hashIn(names); tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === n)); names.forEach(k => panes[k].hidden = k !== n); onShow?.(n); };
+    tabs.forEach(t => t.onclick = () => location.hash = t.dataset.tab);
+    addEventListener('hashchange', show); show();
+  };
+  // графики и карточки дашбордов
+  const bars = s => { const m = Math.max(1, ...s.map(x => x.n)); return `<div class="bars">${s.map(x => `<div class="bar"><b>${x.n}</b><i style="--h:${Math.round(x.n / m * 100)}%"></i><small>${x.label}</small></div>`).join('')}</div>`; };
+  const statc = (n, l, d = 0) => `<div class="card stat rise" style="--d:${d}s"><b data-count="${n}">0</b><small>${l}</small></div>`;
+  const ring = v => `<div class="ring" style="--v:${v}"><b data-count="${v}" data-suffix="%">0</b></div>`;
+
+  // ---- уведомления ----
+  const LBL = { meet: 'Собеседование', pending: 'Заявка партнёра', reply: 'Новый отклик', invite: 'Приглашение', chat: 'Новое сообщение', ok: 'Хорошие новости', no: 'Ответ получен', help: 'Поддержка' };
+  const kind = t => /ожидает одобрения/.test(t) ? 'pending' : /собеседован/.test(t) ? 'meet' : /сообщение/.test(t) ? 'chat' : /поддержк|обращени/.test(t) ? 'help' : /приглашает/.test(t) ? 'invite' : /принял|приняла|подтверждён|одобрена|оффер/.test(t) ? 'ok' : /отклонил/.test(t) ? 'no' : 'reply';
+  function ntoast(n) {
+    let box = $('.ntoasts'); if (!box) { box = document.createElement('div'); box.className = 'ntoasts'; document.body.appendChild(box); }
+    const k = kind(n.text), el = document.createElement('a');
+    el.className = 'ntoast'; el.href = n.link || '#';
+    el.innerHTML = `<span class="nic">${icon(k === 'ok' || k === 'no' || k === 'help' ? k === 'help' ? 'help' : k : k)}</span><span class="nbody"><em>${LBL[k]}</em><span>${esc(n.text)}</span></span><button class="nx" aria-label="Закрыть">×</button>`;
+    let t; const close = () => { el.classList.add('out'); setTimeout(() => el.remove(), 400); };
+    const arm = ms => { clearTimeout(t); t = setTimeout(close, ms); };
+    el.addEventListener('mouseenter', () => clearTimeout(t)); el.addEventListener('mouseleave', () => arm(2500));
+    el.querySelector('.nx').onclick = e => { e.preventDefault(); e.stopPropagation(); close(); };
+    box.appendChild(el); while (box.children.length > 3) box.firstChild.remove(); arm(6500);
+  }
+  function initBell() {
+    const w = document.createElement('div'); w.className = 'bell-wrap';
+    w.innerHTML = `<button class="theme" aria-label="Уведомления">${icon('bell')}<i class="badge" hidden></i></button>
+      <div class="npanel"><div class="nhead"><b>Уведомления</b><span class="nchip" hidden></span></div><div class="nlist"></div><a class="nfoot" href="/pages/chat.html"><span>Открыть чаты</span><span>→</span></a></div>`;
+    $('.right').insertBefore(w, $('#theme'));
+    const btn = w.querySelector('button'), panel = w.querySelector('.npanel'), list = w.querySelector('.nlist'), badge = w.querySelector('.badge'), chip = w.querySelector('.nchip');
+    let items = [], maxId = null; const fresh = new Set();
+    const isNew = n => !n.is_read || fresh.has(n.id);
+    const row = n => { const k = kind(n.text); return `<a class="nitem ${isNew(n) ? 'unread' : ''}" href="${esc(n.link || '#')}"><span class="nic">${icon(k)}</span><span class="nbody"><em>${LBL[k]}</em><span>${esc(n.text)}</span><small>${ago(n.created_at)}</small></span></a>`; };
+    const render = () => {
+      const nw = items.filter(isNew), old = items.filter(n => !isNew(n));
+      chip.hidden = !nw.length; chip.textContent = nw.length + ' нов.';
+      list.innerHTML = items.length ? (nw.length ? `<div class="nsec">Новые</div>${nw.map(row).join('')}` : '') + (old.length ? `<div class="nsec">Ранее</div>${old.map(row).join('')}` : '')
+        : `<div class="nempty"><span class="nic">${icon('bell')}</span><b>Пока тихо</b><small>Здесь появятся отклики, приглашения и сообщения</small></div>`;
+    };
+    async function poll() {
+      try {
+        const d = await api('/api/notifications'); items = d.items; badge.hidden = !d.unread;
+        if (maxId !== null) items.filter(n => n.id > maxId && !n.is_read).reverse().forEach(ntoast);
+        maxId = Math.max(maxId ?? 0, items.length ? items[0].id : 0); render();
+      } catch {}
+    }
+    const closePanel = () => { panel.classList.remove('open'); fresh.clear(); render(); };
+    btn.onclick = async e => {
+      e.stopPropagation();
+      if (panel.classList.contains('open')) return closePanel();
+      items.forEach(n => { if (!n.is_read) fresh.add(n.id); });
+      panel.classList.add('open'); render();
+      if (fresh.size) { badge.hidden = true; await api('/api/notifications/read', { method: 'POST' }).catch(() => {}); }
+    };
+    document.addEventListener('click', e => { if (!w.contains(e.target) && panel.classList.contains('open')) closePanel(); });
+    poll(); setInterval(poll, 10000); setInterval(render, 60000);
+  }
+
+  // ---- воронка: общие вставки ----
+  const placeHtml = p => !p ? '' : /^https?:\/\/\S+$/i.test(p) ? `<a href="${esc(p)}" target="_blank" rel="noopener">${esc(p)}</a>` : esc(p);
+  const STEPS = ['Отправлен', 'Собеседование', 'Оффер', 'Принят'];
+  const stepper = a => a.status === 'declined' ? '<div class="steps bad"><span>Отказ</span></div>'
+    : `<div class="steps">${STEPS.map((t, k) => `<span class="${k <= { new: 0, interview: 1, offer: 2, accepted: 3 }[a.status] ? 'on' : ''}">${t}</span>`).join('')}</div>`;
+  const ivBlock = a => !a.interview ? '' : `<div class="kiv"><b>Собеседование: ${when(a.interview.scheduled_at)}</b> · ${a.interview.format === 'office' ? 'в офисе' : 'онлайн'}${a.interview.place ? '<br>' + placeHtml(a.interview.place) : ''}${a.interview.note ? '<br><small>' + esc(a.interview.note) + '</small>' : ''}
+    <div class="acts" style="margin-top:10px">${a.interview.status === 'proposed' ? `<button class="btn primary sm" data-ivdo="confirmed" data-id="${a.interview.id}">Подтвердить</button><button class="btn sm" data-ivdo="reschedule" data-id="${a.interview.id}">Попросить перенос</button>` : `<span class="tag">${{ confirmed: 'Подтверждено', reschedule: 'Просили перенос' }[a.interview.status] || ''}</span>`}</div></div>`;
+
+  // ---- сопроводительное письмо ----
+  let pcache = null;
+  const coverTpl = (p, title) => `Здравствуйте!\n\nМеня зовут ${p.full_name || '…'}${p.age ? ', мне ' + p.age : ''}. ${p.university ? 'Учусь в ' + p.university : 'Учусь'}${p.specialty ? ' по направлению «' + p.specialty + '»' : ''}. Меня заинтересовала вакансия «${title}».\n\n${p.skills ? 'Мои навыки: ' + p.skills + '.\n\n' : ''}${p.desired_experience ? 'Хочу получить опыт: ' + p.desired_experience + '.\n\n' : ''}Буду рад(а) возможности поработать в вашей команде и быстро научиться. Спасибо за внимание!`;
+  function openApply(id, title, onDone) {
+    const bk = document.createElement('div'); bk.className = 'mbk';
+    bk.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>Отклик на «${esc(title)}»</h3>
+      <p class="lead">Сопроводительное письмо помогает выделиться — расскажите, почему вам интересна вакансия. Это необязательно.</p>
+      <textarea maxlength="1500" placeholder="Здравствуйте! Меня зовут…"></textarea>
+      <div class="mcount"><button type="button" class="linkbtn" id="mtpl">Вставить шаблон из профиля</button><span><b id="mn">0</b> / 1500</span></div>
+      <div class="mact"><button class="btn" id="mcancel" type="button">Отмена</button><button class="btn primary" id="msend" type="button">Отправить отклик</button></div></div>`;
+    document.body.appendChild(bk);
+    const ta = bk.querySelector('textarea'), close = () => { bk.remove(); removeEventListener('keydown', onKey); };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    addEventListener('keydown', onKey); ta.focus();
+    ta.oninput = () => { bk.querySelector('#mn').textContent = ta.value.length; };
+    bk.addEventListener('click', e => { if (e.target === bk) close(); });
+    bk.querySelector('#mcancel').onclick = close;
+    bk.querySelector('#mtpl').onclick = async () => { try { pcache = pcache || await api('/api/profile'); ta.value = coverTpl(pcache, title); ta.oninput(); } catch (e) { fail(e); } };
+    bk.querySelector('#msend').onclick = async e => {
+      const btn = e.currentTarget, r = btn.getBoundingClientRect(); btn.disabled = true;
+      try { await api('/api/apply/' + id, { method: 'POST', body: { cover_letter: ta.value } }); window.burst?.(r.left + r.width / 2, r.top); close(); onDone(); }
+      catch (err) { btn.disabled = false; fail(err); if (err.message.includes('профиль')) setTimeout(() => location.href = '/pages/account.html#profile', 1400); }
+    };
+  }
+  // ссылки портфолио: только http(s)
+  const linkify = s => String(s).split(/[\s,;]+/).filter(Boolean).map(t => {
+    try { const u = new URL(/^https?:\/\//i.test(t) ? t : 'https://' + t); if (!/^https?:$/.test(u.protocol)) throw 0; return `<a href="${esc(u.href)}" target="_blank" rel="noopener">${esc(t)}</a>`; }
+    catch { return esc(t); }
+  }).join(' · ');
+
+  async function main() {
+    let me = null;
+    if (token()) { try { me = await api('/api/me'); localStorage.setItem('role', me.role); } catch { return; } }
+    const rule = GUARD[page];
+    if (rule) { if (!me) return location.href = '/pages/login.html'; if (!rule.includes(me.role)) return location.href = cabinet(); }
+    if (['login', 'register', 'forgot'].includes(page) && me) return location.href = cabinet();
+    if (page === 'profile') return location.href = '/pages/account.html#profile';
+    const flash = sessionStorage.getItem('flash'); if (flash) { sessionStorage.removeItem('flash'); toast(flash); }
+
+    // ---- шапка, нижняя панель, баннер ----
+    const ab = $('#auth-btn'), reg = $('#reg-btn'), links = $('.links');
+    if (me) {
+      const home = page === 'home' || page === 'partners';
+      const accLink = me.role === 'admin' ? '/pages/account.html#security' : '/pages/account.html#profile';
+      const tabs = [...NAV[me.role], ['account', 'Аккаунт', accLink, 'user']];
+      if (home) { ab.textContent = 'Кабинет'; ab.href = cabinet(); if (reg) reg.remove(); }
+      else {
+        ab.remove();
+        links.innerHTML = '<a class="mh" href="/">Главная</a>' + NAV[me.role].map(([k, l, h]) => `<a href="${h}" class="${k === page ? 'on' : ''}">${l}</a>`).join('');
+        const um = document.createElement('div'); um.className = 'umenu';
+        const lab = { student: 'Студент', company: 'Компания', admin: 'Администратор' }[me.role];
+        const mi = (h, i, t) => `<a href="${h}">${icon(i)}<span>${t}</span></a>`;
+        um.innerHTML = `<button class="uavatar" aria-label="Меню профиля">${esc(me.email[0].toUpperCase())}</button>
+          <div class="udrop"><div class="uhead"><b>${lab}</b><small>${esc(me.email)}</small></div>
+          ${mi('/', 'home', 'На главную')}${me.role === 'admin' ? '' : mi(accLink, 'user', me.role === 'company' ? 'Профиль компании' : 'Мой профиль')}${mi('/pages/account.html#security', 'lock', 'Безопасность')}${me.role === 'admin' ? '' : mi('/pages/support.html', 'help', 'Поддержка')}<button class="ul" id="open-set">${icon('sliders')}<span>Оформление и тема</span></button><hr>
+          <button class="ul" id="logout">${icon('out')}<span>Выйти</span></button></div>`;
+        const br = $('.burger'); br ? $('.right').insertBefore(um, br) : $('.right').appendChild(um);
+        const dd = um.querySelector('.udrop');
+        window.__gear?.remove();
+        um.querySelector('#open-set').onclick = () => { dd.classList.remove('open'); window.openSettings?.(); };
+        um.querySelector('.uavatar').onclick = e => { e.stopPropagation(); dd.classList.toggle('open'); };
+        document.addEventListener('click', e => { if (!um.contains(e.target)) dd.classList.remove('open'); });
+        um.querySelector('#logout').onclick = async () => { await api('/api/logout', { method: 'POST' }).catch(() => {}); localStorage.removeItem('token'); localStorage.removeItem('role'); location.href = '/'; };
+      }
+      const tb = document.createElement('nav'); tb.className = 'tabbar';
+      tb.innerHTML = tabs.map(([k, l, h, i]) => `<a href="${h}" class="${k === page ? 'on' : ''}">${icon(i)}<span>${l}</span></a>`).join('');
+      document.body.appendChild(tb); document.body.classList.add('hastab');
+      const pend = me.role === 'company' && !me.approved;
+      if ((pend && page !== 'support') || (!pend && !me.verified && page !== 'verify')) {
+        const b = document.createElement('div'); b.className = 'vbanner';
+        b.innerHTML = pend ? 'Аккаунт компании проверяется: пока доступен только просмотр и чат с поддержкой. <a href="/pages/support.html">Оставить заявку</a>'
+          : 'Подтвердите email, чтобы откликаться и писать сообщения <a href="/pages/verify.html">Подтвердить</a>';
+        document.body.appendChild(b);
+      }
+      initBell();
+    }
+
+    // ---- главная: живые цифры ----
+    if (page === 'home') fetch('/api/public/stats').then(r => r.json()).then(s => {
+      for (const [k, v] of Object.entries(s)) { const el = $('#n-' + k); if (el) el.dataset.count = v; }
+      watchCounts($('#numbers'));
+    }).catch(() => {});
+
+    // ---- вход / регистрация ----
+    const af = $('#auth-form');
+    if (af) {
+      const rt = $('#role-tabs');
+      if (rt) {
+        const set = r => { $$('#role-tabs .tab').forEach(b => b.classList.toggle('active', b.dataset.role === r)); af.elements.role.value = r; $('#company-name').hidden = r !== 'company'; af.elements.name.required = r === 'company'; };
+        rt.onclick = e => { const b = e.target.closest('.tab'); if (b) set(b.dataset.role); };
+        set(new URLSearchParams(location.search).get('role') === 'company' ? 'company' : 'student');
+      }
+      af.addEventListener('submit', async e => {
+        e.preventDefault();
+        const btn = af.querySelector('button.btn'); btn.disabled = true;
+        try {
+          const d = await api(af.dataset.url, { method: 'POST', body: Object.fromEntries(new FormData(af)) });
+          localStorage.setItem('token', d.token); localStorage.setItem('role', d.role);
+          d.devCode ? sessionStorage.setItem('devCode', d.devCode) : sessionStorage.removeItem('devCode');
+          location.href = d.verified ? cabinet() : '/pages/verify.html';
+        } catch (err) { fail(err); btn.disabled = false; }
+      });
+    }
+
+    // ---- подтверждение email ----
+    const vf = $('#verify-form');
+    if (vf) {
+      if (me.verified) return location.href = cabinet();
+      $('#vemail').textContent = me.email;
+      const showDev = c => { if (c) { $('#devhint').hidden = false; $('#devcode').textContent = c; } };
+      showDev(sessionStorage.getItem('devCode'));
+      const rb = $('#resend'); let cd = 0, timer;
+      const tick = () => { rb.disabled = cd > 0; rb.textContent = cd > 0 ? `Отправить код ещё раз (${cd} с)` : 'Отправить код ещё раз'; if (cd > 0) { cd--; timer = setTimeout(tick, 1000); } };
+      cd = 60; tick();
+      rb.onclick = async () => { try { const d = await api('/api/verify/send', { method: 'POST' }); showDev(d.devCode); sessionStorage.setItem('devCode', d.devCode || ''); toast('Код отправлен'); clearTimeout(timer); cd = 60; tick(); } catch (err) { fail(err); } };
+      vf.addEventListener('submit', async e => {
+        e.preventDefault();
+        try { await api('/api/verify/confirm', { method: 'POST', body: { code: vf.elements.code.value } }); sessionStorage.removeItem('devCode'); window.burst?.(innerWidth / 2, innerHeight / 3); toast('Email подтверждён ✓'); setTimeout(() => location.href = cabinet(), 1100); }
+        catch (err) { fail(err); }
+      });
+    }
+
+    // ---- восстановление пароля ----
+    const f1 = $('#f1');
+    if (f1) {
+      const f2 = $('#f2'); let email = '';
+      f1.addEventListener('submit', async e => {
+        e.preventDefault(); email = f1.elements.email.value;
+        try {
+          const d = await api('/api/password/forgot', { method: 'POST', body: { email } });
+          f1.hidden = true; f2.hidden = false; toast('Если такой email есть, мы отправили код');
+          if (d.devCode) { $('#devhint').hidden = false; $('#devcode').textContent = d.devCode; }
+        } catch (err) { fail(err); }
+      });
+      f2.addEventListener('submit', async e => {
+        e.preventDefault();
+        try { await api('/api/password/reset', { method: 'POST', body: { email, code: f2.elements.code.value, password: f2.elements.password.value } }); toast('Пароль изменён — войдите заново'); setTimeout(() => location.href = '/pages/login.html', 1300); }
+        catch (err) { fail(err); }
+      });
+    }
+
+    // ---- аккаунт ----
+    const pw = $('#pw-form');
+    if (pw) {
+      if (me.role !== 'student') $('#student-box').remove();
+      if (me.role !== 'company') $('#company-box').remove();
+      if (me.role === 'admin') { $('[data-tab=profile]').remove(); $('[data-pane=profile]').remove(); }
+      initTabs();
+      const acf = $('#company-form');
+      if (acf) {
+        if (!me.approved) { acf.querySelectorAll('input,textarea,button').forEach(x => x.disabled = true); acf.insertAdjacentHTML('afterbegin', '<div class="devhint">Редактирование откроется после одобрения аккаунта администратором.</div>'); }
+        api('/api/company').then(c => { for (const [k, v] of Object.entries(c)) if (acf.elements[k] && v != null) acf.elements[k].value = v; }).catch(fail);
+        acf.addEventListener('submit', async e => { e.preventDefault(); try { await api('/api/company', { method: 'PUT', body: Object.fromEntries(new FormData(acf)) }); toast('Профиль компании сохранён ✓'); } catch (err) { fail(err); } });
+      }
+      $('#acc-info').textContent = `${me.email} · ${{ student: 'студент', company: 'компания', admin: 'администратор' }[me.role]}`;
+      $('#vstat').innerHTML = me.verified ? '<span class="ok">✓ Email подтверждён</span>' : 'Email не подтверждён. <a class="linkbtn" href="/pages/verify.html">Подтвердить сейчас</a>';
+      pw.addEventListener('submit', async e => {
+        e.preventDefault();
+        const f = pw.elements;
+        if (f.next.value !== f.again.value) return toast('Новые пароли не совпадают');
+        try { await api('/api/password/change', { method: 'POST', body: { current: f.current.value, next: f.next.value } }); pw.reset(); toast('Пароль изменён ✓'); } catch (err) { fail(err); }
+      });
+    }
+
+    // ---- дашборд ----
+    const dash = $('#dash');
+    if (dash) {
+      try {
+        const d = await api('/api/dashboard');
+        const hello = (t, p) => `<div class="rise"><span class="eyebrow">Обзор</span><h2>${t}</h2><p class="lead">${p}</p></div>`;
+        if (d.kind === 'student') {
+          const picksHtml = d.picks.length ? d.picks.map(v => `<a class="mini" href="/pages/vacancies.html"><span>${esc(v.title)}<br><small>${esc(v.company)}${v.why.length ? ' · ' + esc(v.why[0]) : ''}</small></span><span class="mpill ${v.match >= 70 ? 'hi' : ''}" style="--v:${v.match}"><b>${v.match}%</b></span></a>`).join('')
+            : '<p style="color:var(--muted);margin-bottom:14px">Добавьте навыки и желаемый опыт в профиле — подберём вакансии с процентом совпадения.</p><a class="btn sm" href="/pages/account.html#profile">Заполнить профиль</a>';
+          const rec = d.recent.length ? d.recent.map(a => `<div class="mini"><span>${esc(a.title)}<br><small>${esc(a.company)} · ${a.direction === 'company_to_student' ? 'приглашение' : 'отклик'}</small></span><span class="tag">${ST[a.status] || a.status}</span></div>`).join('') : '<p class="empty" style="padding:20px 0">Пока пусто — откликнитесь на первую вакансию</p>';
+          dash.innerHTML = hello(`Привет, ${esc(d.name || 'студент')}`, 'Вот что происходит с вашими откликами и профилем.') + `<div class="dash">
+            <div class="dtop"><div class="card rise" style="text-align:center;--d:.05s"><h4>Заполненность профиля</h4>${ring(d.completeness)}
+              <p style="color:var(--muted);font-size:.92rem;margin-bottom:16px">${d.completeness < 100 ? 'Чем полнее анкета, тем чаще вас находят компании.' : 'Отлично, профиль полностью заполнен!'}</p>
+              <a class="btn primary sm" href="/pages/account.html#profile">${d.completeness < 100 ? 'Дополнить' : 'Открыть профиль'}</a></div>
+              <div class="stats4 s2">${statc(d.stats.responses, 'Мои отклики', .1)}${statc(d.stats.offers, 'Новые предложения', .15)}${statc(d.stats.accepted, 'Принято', .2)}${statc(d.stats.favs, 'В избранном', .25)}</div></div>
+            <div class="card rise" style="--d:.28s"><h4>Подобрано для вас</h4>${picksHtml}</div>
+            <div class="dcols"><div class="card rise" style="--d:.3s"><h4>Отклики за 7 дней</h4>${bars(d.series)}</div><div class="card rise" style="--d:.35s"><h4>Последняя активность</h4>${rec}</div></div>
+            <div class="qa rise" style="--d:.4s"><a class="btn primary" href="/pages/vacancies.html">Найти вакансии</a><a class="btn" href="/pages/resume.html#me">Резюме в PDF</a><a class="btn" href="/pages/chat.html">Открыть чаты</a><a class="btn" href="/pages/support.html">Поддержка</a></div></div>`;
+        } else if (d.kind === 'company') {
+          const top = d.top.length ? d.top.map(v => `<div class="mini"><span>${esc(v.title)}<br><small>${v.is_active ? 'активна' : 'закрыта'}</small></span><span class="tag">${v.responses} откл.</span></div>`).join('') : '<p class="empty" style="padding:20px 0">Опубликуйте первую вакансию</p>';
+          dash.innerHTML = hello(esc(d.name || 'Ваша компания'), 'Сводка по вакансиям, откликам и приглашениям.') + `<div class="dash">
+            <div class="stats4">${statc(d.stats.vacancies, 'Активных вакансий', .05)}${statc(d.stats.responses, 'Откликов', .1)}${statc(d.stats.invites, 'Приглашений', .15)}${statc(d.stats.accepted, 'Принято', .2)}</div>
+            <div class="dcols"><div class="card rise" style="--d:.25s"><h4>Отклики за 7 дней</h4>${bars(d.series)}</div><div class="card rise" style="--d:.3s"><h4>Лучшие вакансии</h4>${top}</div></div>
+            ${me.approved ? '<div class="qa rise" style="--d:.35s"><a class="btn primary" href="/pages/company.html#vacancies">Новая вакансия</a><a class="btn" href="/pages/company.html#students">Найти студентов</a><a class="btn" href="/pages/company.html#responses">Отклики</a></div>'
+              : '<div class="card rise" style="--d:.35s"><h4>Статус заявки</h4><p style="margin-bottom:16px;color:var(--muted)">Мы проверяем вашу компанию. Опишите её в чате поддержки — после проверки откроются вакансии и приглашения студентов.</p><a class="btn primary" href="/pages/support.html">Оставить заявку</a></div>'}</div>`;
+        }
+        watchCounts(dash);
+      } catch (e) { fail(e); }
+    }
+
+    // ---- резюме ----
+    if (page === 'resume') {
+      const paper = $('#paper');
+      $('#rback').onclick = () => history.length > 1 ? history.back() : location.href = cabinet();
+      $('#rprint').onclick = () => window.print();
+      try {
+        const p = await api('/api/resume/' + encodeURIComponent(location.hash.slice(1) || 'me'));
+        const sec = (t, h) => h ? `<h3>${t}</h3>${h}` : '';
+        const skills = String(p.skills || '').split(/[,;\n]+/).map(x => x.trim()).filter(Boolean);
+        paper.innerHTML = `<header><h1>${esc(p.full_name || 'Без имени')}</h1>
+          <p class="rrole">${[p.specialty, p.education].filter(Boolean).map(esc).join(' · ') || 'Студент'}</p>
+          <div class="rcontacts">${[esc(p.email), p.city && esc(p.city), p.age && p.age + ' лет'].filter(Boolean).map(x => `<span>${x}</span>`).join('')}</div></header>
+          ${sec('О себе', p.about && `<p>${esc(p.about)}</p>`)}
+          ${sec('Образование', (p.university || p.education || p.specialty) && `<p>${[p.university, p.education, p.specialty].filter(Boolean).map(esc).join('\n')}</p>`)}
+          ${sec('Навыки', skills.length && `<div class="skills">${skills.map(x => `<span>${esc(x)}</span>`).join('')}</div>`)}
+          ${sec('Опыт работы', p.work_history && `<p>${esc(p.work_history)}</p>`)}
+          ${sec('Хочу получить опыт', p.desired_experience && `<p>${esc(p.desired_experience)}</p>`)}
+          ${sec('Портфолио', p.portfolio && `<p>${linkify(p.portfolio)}</p>`)}
+          <div class="rfoot">Резюме создано на платформе «Первый шаг» · ${new Date().toLocaleDateString('ru')}</div>`;
+        document.title = `Резюме — ${p.full_name || 'студент'}`;
+      } catch (e) { paper.innerHTML = `<p class="empty">${esc(e.message)}</p>`; $('#rprint').disabled = true; }
+    }
+
+    // ---- профиль студента ----
+    const pf = $('#profile-form');
+    if (pf && me.role === 'student') {
+      api('/api/profile').then(p => { if ($('#email')) $('#email').textContent = p.email; for (const [k, v] of Object.entries(p)) if (pf.elements[k] && v != null) pf.elements[k].value = v; }).catch(fail);
+      pf.addEventListener('submit', async e => {
+        e.preventDefault();
+        try { await api('/api/profile', { method: 'PUT', body: Object.fromEntries(new FormData(pf)) }); toast('Профиль сохранён ✓'); } catch (err) { fail(err); }
+      });
+    }
+
+    // ---- вакансии студента ----
+    const list = $('#list');
+    if (list) {
+      const modes = ['vacancies', 'offers', 'mine'], tabs = $$('.tab');
+      let mode = hashIn(modes), dt;
+      const qs = () => new URLSearchParams({ q: $('#f-q').value.trim(), format: $('#f-format').value, category: $('#f-cat').value, paid: $('#f-paid').classList.contains('on') ? '1' : '', fav: $('#f-fav').classList.contains('on') ? '1' : '', sort: $('#f-sort').value }).toString();
+      async function render() {
+        tabs.forEach(t => t.classList.toggle('active', t.dataset.mode === mode)); $('#filters').hidden = mode !== 'vacancies';
+        if (mode === 'vacancies') {
+          const vs = await api('/api/vacancies?' + qs());
+          const hint = vs.length && vs.every(v => v.match == null) ? '<div class="devhint">Добавьте навыки и желаемый опыт в <a class="linkbtn" href="/pages/account.html#profile">профиле</a> — мы покажем процент совпадения и подберём лучшие вакансии.</div>' : '';
+          list.innerHTML = hint + (vs.length ? vs.map(v => card(`<div><small>${esc(v.company)}</small><h3>${esc(v.title)}</h3>${matchRow(v)}<div class="tags">${tagsOf(v)}</div><p>${esc(v.description)}</p></div>
+            <div class="acts"><button class="fav ${v.fav ? 'on' : ''}" data-do="fav" data-id="${v.id}" aria-label="В избранное">♥</button>
+            <button class="btn ${v.applied ? '' : 'primary'}" data-do="apply" data-id="${v.id}" data-title="${esc(v.title)}" ${v.applied ? 'disabled' : ''}>${v.applied ? 'Отклик отправлен' : 'Откликнуться'}</button></div>`)).join('')
+            : '<p class="empty">Ничего не найдено. Попробуйте изменить фильтры</p>');
+          return;
+        }
+        const offers = mode === 'offers';
+        const rows = (await api('/api/applications')).filter(a => a.direction === (offers ? 'company_to_student' : 'student_to_company'));
+        list.innerHTML = rows.length ? rows.map(a => card(`<div><small>${esc(a.company)} · ${when(a.created_at)}</small><h3>${esc(a.title)}</h3>${offers ? '' : stepper(a) + ivBlock(a)}${a.cover_letter ? '<details class="cl"><summary>Ваше письмо</summary><p>' + esc(a.cover_letter) + '</p></details>' : ''}</div>` +
+          (offers && a.status === 'new' ? `<div class="acts"><button class="btn primary sm" data-do="accepted" data-id="${a.id}">Принять</button><button class="btn sm" data-do="declined" data-id="${a.id}">Отклонить</button></div>`
+            : `<div class="acts"><span class="tag">${ST[a.status] || a.status}</span>${a.chat ? `<a class="btn primary sm" href="/pages/chat.html#${a.id}">Чат</a>` : ''}${!offers && a.status === 'new' ? `<button class="btn sm" data-do="withdraw" data-id="${a.id}">Отозвать</button>` : ''}</div>`))).join('')
+          : `<p class="empty">${offers ? 'Пока нет предложений от партнёров. Заполните профиль — компании увидят его.' : 'Вы ещё никуда не откликались'}</p>`;
+      }
+      tabs.forEach(t => t.onclick = () => location.hash = t.dataset.mode);
+      addEventListener('hashchange', () => { mode = hashIn(modes); render().catch(fail); });
+      $$('.chip').forEach(c => c.onclick = () => { c.classList.toggle('on'); render().catch(fail); });
+      $('#filters').addEventListener('input', () => { clearTimeout(dt); dt = setTimeout(() => render().catch(fail), 280); });
+      list.addEventListener('click', async e => {
+        const iv = e.target.closest('button[data-ivdo]');
+        if (iv) { try { await api(`/api/interviews/${iv.dataset.id}/respond`, { method: 'POST', body: { status: iv.dataset.ivdo } }); toast('Ответ отправлен ✓'); render(); } catch (err) { fail(err); } return; }
+        const b = e.target.closest('button[data-do]'); if (!b) return;
+        const act = b.dataset.do;
+        try {
+          if (act === 'fav') await api('/api/favorites/' + b.dataset.id, { method: 'POST' });
+          else if (act === 'apply') { openApply(b.dataset.id, b.dataset.title, () => { toast('Отклик отправлен ✓'); render(); }); return; }
+          else if (act === 'withdraw') { await api('/api/applications/' + b.dataset.id, { method: 'DELETE' }); toast('Отклик отозван'); }
+          else { await api(`/api/applications/${b.dataset.id}/respond`, { method: 'POST', body: { status: act } }); if (act === 'accepted') boom(e); toast('Готово ✓'); }
+          render();
+        } catch (err) { fail(err); if (err.message.includes('профиль')) setTimeout(() => location.href = '/pages/account.html#profile', 1400); }
+      });
+      render().catch(fail);
+    }
+
+    // ---- чат по откликам ----
+    if (page === 'chat') {
+      const box = $('#chat'), cl = $('#clist'), msgs = $('#msgs'), form = $('#msg-form');
+      let cur = null, pane = null;
+      const nameFor = c => role() === 'company' ? (c.full_name || 'Студент') : c.company;
+      async function loadList() {
+        const cs = await api('/api/chats');
+        const html = cs.length ? cs.map(c => `<a class="citem ${c.id === cur ? 'active' : ''}" href="#${c.id}"><b>${esc(nameFor(c))}</b><small>${esc(c.title)}</small><span>${esc(c.last_text || 'Начните диалог')}</span></a>`).join('')
+          : '<p class="empty" style="padding:28px 16px">Чаты появятся после отклика студента или принятого приглашения</p>';
+        if (cl.dataset.h !== html) { cl.innerHTML = html; cl.dataset.h = html; }
+      }
+      async function select() {
+        cur = Number(location.hash.slice(1)) || null; box.classList.toggle('open', !!cur); form.hidden = !cur;
+        if (!cur) { pane = null; msgs.innerHTML = '<p class="empty">Выберите диалог слева</p>'; $('#cname2').textContent = 'Выберите чат'; $('#ctitle').textContent = ''; return loadList(); }
+        pane = mkPane(msgs, `/api/chats/${cur}/messages`, '<p class="empty">Сообщений пока нет — поприветствуйте собеседника</p>');
+        try { const d = await pane(true); $('#cname2').textContent = role() === 'company' ? d.student : d.company; $('#ctitle').textContent = d.title; }
+        catch (e) { fail(e); location.hash = ''; return; }
+        loadList();
+      }
+      addEventListener('hashchange', () => select().catch(() => {}));
+      form.addEventListener('submit', async e => {
+        e.preventDefault();
+        const t = form.elements.text.value.trim(); if (!t) return; form.elements.text.value = '';
+        try { await api(`/api/chats/${cur}/messages`, { method: 'POST', body: { text: t } }); await pane(false); loadList(); }
+        catch (err) { fail(err); form.elements.text.value = t; }
+      });
+      setInterval(() => { pane?.(false).catch(() => {}); loadList().catch(() => {}); }, 3500);
+      select();
+    }
+
+    // ---- чат с поддержкой (пользователь) ----
+    const sf = $('#sform');
+    if (sf) {
+      if (me.role === 'company' && !me.approved) {
+        const tpl = 'Заявка на подключение компании\nНазвание: \nСфера: \nСайт: \nКонтактное лицо и телефон: \nЧто хотите предложить студентам: ';
+        $('#apphint').hidden = false;
+        $('#fill-tpl').onclick = () => { sf.elements.text.value = tpl; sf.elements.text.rows = 6; sf.elements.text.focus(); };
+      }
+      sf.elements.text.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sf.requestSubmit(); } });
+      const pane = mkPane($('#smsgs'), '/api/support/messages', '<p class="empty">Здравствуйте! Опишите вопрос — мы ответим здесь.</p>');
+      pane(true).catch(fail);
+      sf.addEventListener('submit', async e => {
+        e.preventDefault();
+        const t = sf.elements.text.value.trim(); if (!t) return; sf.elements.text.value = ''; sf.elements.text.rows = 2;
+        try { await api('/api/support/messages', { method: 'POST', body: { text: t } }); await pane(false); } catch (err) { fail(err); sf.elements.text.value = t; }
+      });
+      setInterval(() => pane(false).catch(() => {}), 4000);
+    }
+
+    // ---- кабинет компании ----
+    if (page === 'company') {
+      const vf2 = $('#vac-form');
+      initTabs();
+      if (!me.approved) {
+        document.body.classList.add('locked');
+        $('.stats').insertAdjacentHTML('afterend', '<div class="devhint" style="margin-top:16px">Аккаунт на проверке: доступен просмотр. Чтобы публиковать вакансии и приглашать студентов, оставьте заявку в <a class="linkbtn" href="/pages/support.html">чате поддержки</a>.</div>');
+        vf2.querySelectorAll('input,select,textarea,button').forEach(el => el.disabled = true);
+      }
+      // ---- воронка откликов ----
+      const STAGES = [['new', 'Новые'], ['interview', 'Собеседование'], ['offer', 'Оффер'], ['accepted', 'Принят'], ['declined', 'Отказ']];
+      const IVS = { proposed: 'ждёт подтверждения', confirmed: 'подтверждено', reschedule: 'просит перенести' };
+      let funnel = [], lastSig = '';
+      const kcard = a => `<div class="kcard" data-id="${a.id}" ${me.approved ? 'draggable="true"' : ''}>
+        <b>${esc(a.full_name || 'Студент')}</b><small>«${esc(a.title)}» · ${ago(a.created_at)}</small>
+        <p class="kmeta">${[a.age && a.age + ' лет', a.university, a.specialty].filter(Boolean).map(esc).join(' · ')}${a.skills ? '<br>' + esc(a.skills) : ''}</p>
+        ${a.interview ? `<div class="kiv"><b>${when(a.interview.scheduled_at)}</b> · ${a.interview.format === 'office' ? 'в офисе' : 'онлайн'}<br><small>${IVS[a.interview.status] || ''}${a.interview.place ? ' · ' : ''}${placeHtml(a.interview.place)}</small></div>` : ''}
+        ${a.cover_letter ? `<details class="cl"><summary>Письмо</summary><p>${esc(a.cover_letter)}</p></details>` : ''}
+        <div class="kact"><a class="btn sm" href="/pages/resume.html#${a.user_id}" target="_blank">Резюме</a>${a.status !== 'declined' ? `<a class="btn sm" href="/pages/chat.html#${a.id}">Чат</a>` : ''}
+          <button class="btn sm" data-iv="${a.id}">${a.interview ? 'Перенести' : 'Назначить'}</button>
+          <select data-stage="${a.id}" aria-label="Этап">${STAGES.map(([k, l]) => `<option value="${k}" ${k === a.status ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>`;
+      function renderFunnel(rs) {
+        const sig = JSON.stringify(rs.map(a => [a.id, a.status, a.interview?.id, a.interview?.status]));
+        if (sig === lastSig) return; lastSig = sig;
+        funnel = rs.filter(a => a.direction === 'student_to_company');
+        $('#kanban').innerHTML = STAGES.map(([k, l]) => {
+          const items = funnel.filter(a => a.status === k);
+          return `<div class="kcol" data-col="${k}"><div class="khead"><b>${l}</b><span>${items.length}</span></div>${items.map(kcard).join('') || '<p class="kempty">Пусто</p>'}</div>`;
+        }).join('');
+        const inv = rs.filter(a => a.direction === 'company_to_student');
+        $('#resp').innerHTML = inv.length ? inv.map(a => card(`<div><small>Ваше приглашение · «${esc(a.title)}» · ${when(a.created_at)}</small><h3>${esc(a.full_name || 'Студент')}</h3></div>
+          <div class="acts"><span class="tag">${a.status === 'new' ? 'Ждём ответа' : ST[a.status] || a.status}</span>${a.status === 'accepted' ? `<a class="btn sm" href="/pages/resume.html#${a.user_id}" target="_blank">Резюме</a><a class="btn sm" href="/pages/chat.html#${a.id}">Написать</a>` : ''}</div>`)).join('')
+          : '<p class="empty">Приглашений пока нет — найдите студентов во вкладке «Студенты».</p>';
+      }
+      const setStage = async (id, stage) => {
+        try { await api(`/api/company/applications/${id}/status`, { method: 'POST', body: { status: stage } }); toast('Этап обновлён, студент получил уведомление'); if (stage === 'offer' || stage === 'accepted') window.burst?.(innerWidth / 2, innerHeight / 3); }
+        catch (err) { fail(err); }
+        lastSig = ''; load().catch(() => {});
+      };
+      function openInterview(id) {
+        const a = funnel.find(x => x.id == id), iv = a?.interview;
+        const toLocal = d => new Date(new Date(d) - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        const bk = document.createElement('div'); bk.className = 'mbk';
+        bk.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>${iv ? 'Перенести собеседование' : 'Назначить собеседование'}</h3>
+          <p class="lead">${esc(a?.full_name || 'Студент')} получит уведомление и сможет подтвердить время или попросить перенос.</p>
+          <label class="field"><span>Дата и время</span><input type="datetime-local" id="iv-when" min="${toLocal(Date.now())}" value="${iv ? toLocal(iv.scheduled_at) : ''}"></label>
+          <div class="two"><label class="field"><span>Формат</span><select id="iv-fmt"><option value="online">Онлайн</option><option value="office" ${iv?.format === 'office' ? 'selected' : ''}>В офисе</option></select></label>
+          <label class="field"><span>Ссылка или адрес</span><input id="iv-place" maxlength="300" placeholder="https://meet… или адрес офиса" value="${esc(iv?.place || '')}"></label></div>
+          <label class="field"><span>Комментарий (необязательно)</span><textarea id="iv-note" maxlength="500" style="min-height:80px">${esc(iv?.note || '')}</textarea></label>
+          <div class="mact"><button class="btn" id="iv-cancel" type="button">Отмена</button><button class="btn primary" id="iv-send" type="button">Отправить приглашение</button></div></div>`;
+        document.body.appendChild(bk);
+        const close = () => { bk.remove(); removeEventListener('keydown', onKey); lastSig = ''; load().catch(() => {}); };
+        const onKey = e => { if (e.key === 'Escape') close(); };
+        addEventListener('keydown', onKey);
+        bk.addEventListener('click', e => { if (e.target === bk) close(); });
+        bk.querySelector('#iv-cancel').onclick = close;
+        bk.querySelector('#iv-send').onclick = async e => {
+          const w = bk.querySelector('#iv-when').value; if (!w) return toast('Укажите дату и время');
+          const btn = e.currentTarget; btn.disabled = true;
+          try {
+            await api(`/api/company/applications/${id}/interview`, { method: 'POST', body: { when: new Date(w).toISOString(), format: bk.querySelector('#iv-fmt').value, place: bk.querySelector('#iv-place').value, note: bk.querySelector('#iv-note').value } });
+            toast('Приглашение на собеседование отправлено ✓'); close();
+          } catch (err) { btn.disabled = false; fail(err); }
+        };
+      }
+      const askStage = (id, stage) => stage === 'interview' ? openInterview(id) : setStage(id, stage);
+      async function load() {
+        const [c, vs, rs, st] = await Promise.all([api('/api/company'), api('/api/company/vacancies'), api('/api/company/responses'), api('/api/students')]);
+        $('#cname').textContent = c.name;
+        $('#s-v').textContent = vs.filter(v => v.is_active).length;
+        $('#s-r').textContent = rs.filter(a => a.direction === 'student_to_company').length;
+        $('#s-i').textContent = rs.filter(a => a.direction === 'company_to_student').length;
+        $('#vlist').innerHTML = vs.length ? vs.map(v => card(`<div><small>${v.is_active ? 'Активна' : 'Закрыта'} · ${when(v.created_at)}</small><h3>${esc(v.title)}</h3><div class="tags">${tagsOf(v)}</div><p>${esc(v.description)}</p></div>
+          <div class="acts"><span class="tag">Откликов: ${v.responses}</span><button class="btn sm" data-vdo="toggle" data-id="${v.id}">${v.is_active ? 'Закрыть' : 'Открыть'}</button><button class="btn sm" data-vdo="del" data-id="${v.id}">Удалить</button></div>`)).join('') : '<p class="empty">Вы ещё не публиковали вакансии</p>';
+        renderFunnel(rs);
+        const sel = $('#inv-vac'), cur = sel.value, act = vs.filter(v => v.is_active);
+        sel.innerHTML = act.length ? act.map(v => `<option value="${v.id}">${esc(v.title)}</option>`).join('') : '<option value="">Сначала опубликуйте вакансию</option>';
+        if (cur) sel.value = cur;
+        $('#studs').innerHTML = st.length ? st.map(s => card(`<div><h3>${esc(s.full_name)}</h3><p>${[s.age && s.age + ' лет', s.city, s.education, s.university, s.specialty].filter(Boolean).map(esc).join(' · ')}${s.skills ? '<br>Навыки: ' + esc(s.skills) : ''}${s.desired_experience ? '<br>Хочет опыт: ' + esc(s.desired_experience) : ''}</p></div>
+          <button class="btn primary sm" data-uid="${s.user_id}">Пригласить</button>`)).join('') : '<p class="empty">Студенты с заполненными профилями пока не появились</p>';
+      }
+      vf2.addEventListener('submit', async e => {
+        e.preventDefault(); const b = Object.fromEntries(new FormData(vf2)); b.paid = !!b.paid;
+        try { await api('/api/company/vacancies', { method: 'POST', body: b }); vf2.reset(); boom(e.submitter ? { target: e.submitter } : { target: vf2 }); toast('Вакансия опубликована ✓'); load(); } catch (err) { fail(err); }
+      });
+      $('#studs').addEventListener('click', async e => {
+        const b = e.target.closest('button[data-uid]'); if (!b) return;
+        try { await api('/api/invite', { method: 'POST', body: { user_id: b.dataset.uid, vacancy_id: $('#inv-vac').value } }); toast('Приглашение отправлено ✓'); load(); } catch (err) { fail(err); }
+      });
+      $('#vlist').addEventListener('click', async e => {
+        const b = e.target.closest('button[data-vdo]'); if (!b) return;
+        try {
+          if (b.dataset.vdo === 'del') { if (!confirm('Удалить вакансию вместе с откликами?')) return; await api('/api/company/vacancies/' + b.dataset.id, { method: 'DELETE' }); }
+          else await api(`/api/company/vacancies/${b.dataset.id}/toggle`, { method: 'POST' });
+          load();
+        } catch (err) { fail(err); }
+      });
+      const kb = $('#kanban');
+      kb.addEventListener('change', e => { const sel = e.target.closest('select[data-stage]'); if (sel) askStage(sel.dataset.stage, sel.value); });
+      kb.addEventListener('click', e => { const b = e.target.closest('button[data-iv]'); if (b) openInterview(b.dataset.iv); });
+      kb.addEventListener('dragstart', e => { const c = e.target.closest('.kcard'); if (c) { e.dataTransfer.setData('text/plain', c.dataset.id); e.dataTransfer.effectAllowed = 'move'; c.classList.add('drag'); } });
+      kb.addEventListener('dragend', () => { $$('.kcard.drag').forEach(c => c.classList.remove('drag')); $$('.kcol.over').forEach(c => c.classList.remove('over')); });
+      kb.addEventListener('dragover', e => { const col = e.target.closest('.kcol'); if (col) { e.preventDefault(); $$('.kcol.over').forEach(c => c !== col && c.classList.remove('over')); col.classList.add('over'); } });
+      kb.addEventListener('drop', e => {
+        e.preventDefault(); const col = e.target.closest('.kcol'); $$('.kcol.over').forEach(c => c.classList.remove('over'));
+        const id = e.dataTransfer.getData('text/plain'), a = funnel.find(x => x.id == id);
+        if (col && a && a.status !== col.dataset.col) askStage(id, col.dataset.col);
+      });
+      load().catch(fail); setInterval(() => load().catch(() => {}), 15000);
+    }
+
+    // ---- админ-панель ----
+    if (page === 'admin') {
+      const loaded = {};
+      async function overview() {
+        const d = await api('/api/dashboard'), s = d.stats;
+        $('#aov').innerHTML = `<div class="dash" style="margin-top:0"><div class="stats4">${statc(s.users, 'Пользователей', .05)}${statc(s.students, 'Студентов', .1)}${statc(s.companies, 'Компаний', .15)}${statc(s.unverified, 'Не подтвердили email', .2)}
+          ${statc(s.vacancies, 'Вакансий', .25)}${statc(s.applications, 'Откликов и приглашений', .3)}${statc(s.pending, 'Компаний на одобрении', .35)}${statc(s.tickets, 'Открытых обращений', .4)}</div>
+          <div class="card rise" style="--d:.45s"><h4>Регистрации за 14 дней</h4>${bars(d.series)}</div></div>`;
+        watchCounts($('#aov'));
+      }
+      async function users() {
+        const us = await api(`/api/admin/users?q=${encodeURIComponent($('#uq').value)}&role=${$('#urole').value}`);
+        $('#ulist').innerHTML = us.length ? us.map(u => card(`<div><small>${{ student: 'студент', company: 'компания', admin: 'админ' }[u.role]} · ${when(u.created_at)}</small><h3>${esc(u.name || u.email)}</h3>
+          <p>${esc(u.email)}${u.role === 'company' && !u.approved ? ' · ожидает одобрения' : ''}${u.email_verified ? '' : ' · email не подтверждён'}${u.is_blocked ? ' · заблокирован' : ''}</p></div>
+          ${u.role === 'admin' ? '' : `<div class="acts">${u.role === 'company' ? `<button class="btn ${u.approved ? '' : 'primary'} sm" data-ado="${u.approved ? 'revoke' : 'approve'}" data-id="${u.id}">${u.approved ? 'Отозвать доступ' : 'Одобрить'}</button>` : ''}${u.email_verified ? '' : `<button class="btn sm" data-ado="verify" data-id="${u.id}">Подтвердить</button>`}<button class="btn sm" data-ado="${u.is_blocked ? 'unblock' : 'block'}" data-id="${u.id}">${u.is_blocked ? 'Разблокировать' : 'Заблокировать'}</button><button class="btn sm" data-ado="del" data-id="${u.id}">Удалить</button></div>`}`)).join('') : '<p class="empty">Никого не найдено</p>';
+      }
+      async function vacs() {
+        const vs = await api('/api/admin/vacancies');
+        $('#avlist').innerHTML = vs.length ? vs.map(v => card(`<div><small>${esc(v.company)} · ${v.is_active ? 'активна' : 'закрыта'} · ${when(v.created_at)}</small><h3>${esc(v.title)}</h3></div>
+          <div class="acts"><span class="tag">Откликов: ${v.responses}</span><button class="btn sm" data-ado="delvac" data-id="${v.id}">Удалить</button></div>`)).join('') : '<p class="empty">Вакансий нет</p>';
+      }
+      let curT = null, pane = null, dq;
+      const abox = $('#achat'), aform = $('#aform'), amsgs = $('#amsgs');
+      async function threads() {
+        const ts = await api('/api/admin/support');
+        const html = ts.length ? ts.map(t => `<a class="citem ${t.id === curT ? 'active' : ''}" href="#support" data-t="${t.id}"><b>${t.last_staff === false && t.status === 'open' ? '● ' : ''}${esc(t.name)}</b><small>${t.status === 'closed' ? 'закрыто' : 'открыто'} · ${ago(t.updated_at)}${t.role === 'company' && !t.approved ? ' · на одобрении' : ''}</small><span>${esc(t.last_text || '')}</span></a>`).join('') : '<p class="empty" style="padding:28px 16px">Обращений пока нет</p>';
+        if ($('#alist').dataset.h !== html) { $('#alist').innerHTML = html; $('#alist').dataset.h = html; }
+      }
+      const headInfo = d => {
+        const c = d.company, box = $('#acomp');
+        $('#aname').textContent = c?.name || d.email; $('#amail').textContent = `${d.email} · обращение №${curT}`;
+        if (!c) { box.hidden = true; return; }
+        box.hidden = false;
+        box.innerHTML = `<div><b>${esc(c.name)} · ${c.approved ? 'одобрена' : 'ожидает одобрения'}</b><small>${[c.industry, c.city, c.website].filter(Boolean).map(esc).join(' · ') || 'Данные о компании не заполнены'}</small></div>
+          <button class="btn ${c.approved ? '' : 'primary'} sm" id="acomp-btn" data-uid="${d.user_id}" data-ap="${c.approved ? 0 : 1}">${c.approved ? 'Отозвать доступ' : 'Одобрить компанию'}</button>`;
+      };
+      async function openThread(id) {
+        curT = id; $('#acomp').hidden = true; abox.classList.toggle('open', !!id); aform.hidden = !id; $('#astatus').hidden = !id;
+        if (!id) { pane = null; amsgs.innerHTML = '<p class="empty">Выберите обращение слева</p>'; $('#aname').textContent = 'Выберите обращение'; $('#amail').textContent = ''; return threads(); }
+        pane = mkPane(amsgs, `/api/admin/support/${id}/messages`, '<p class="empty">Сообщений нет</p>');
+        const d = await pane(true); headInfo(d); threads();
+      }
+      $('#alist').addEventListener('click', e => { const a = e.target.closest('[data-t]'); if (a) { e.preventDefault(); openThread(Number(a.dataset.t)).catch(fail); } });
+      $('#acomp').addEventListener('click', async e => {
+        const b = e.target.closest('#acomp-btn'); if (!b) return;
+        const ok = b.dataset.ap === '1';
+        try {
+          await api(`/api/admin/users/${b.dataset.uid}/approve`, { method: 'POST', body: { approved: ok } });
+          toast(ok ? 'Компания одобрена ✓' : 'Доступ отозван'); if (ok) boom(e);
+          headInfo(await api(`/api/admin/support/${curT}/messages?after=999999999`)); await pane(false); threads();
+        } catch (err) { fail(err); }
+      });
+      $('#aback').onclick = e => { e.preventDefault(); openThread(null); };
+      aform.addEventListener('submit', async e => {
+        e.preventDefault(); const t = aform.elements.text.value.trim(); if (!t) return; aform.elements.text.value = '';
+        try { await api(`/api/admin/support/${curT}/messages`, { method: 'POST', body: { text: t } }); await pane(false); threads(); } catch (err) { fail(err); aform.elements.text.value = t; }
+      });
+      $('#astatus').onclick = async () => { try { await api(`/api/admin/support/${curT}/status`, { method: 'POST', body: { status: 'closed' } }); toast('Обращение закрыто'); threads(); } catch (err) { fail(err); } };
+      $('#uq').addEventListener('input', () => { clearTimeout(dq); dq = setTimeout(() => users().catch(fail), 280); });
+      $('#urole').addEventListener('change', () => users().catch(fail));
+      document.addEventListener('click', async e => {
+        const b = e.target.closest('[data-ado]'); if (!b) return;
+        const a = b.dataset.ado, id = b.dataset.id;
+        try {
+          if (a === 'del' && !confirm('Удалить пользователя и все его данные?')) return;
+          if (a === 'delvac' && !confirm('Удалить вакансию?')) return;
+          if (a === 'verify') await api(`/api/admin/users/${id}/verify`, { method: 'POST' });
+          else if (a === 'approve' || a === 'revoke') await api(`/api/admin/users/${id}/approve`, { method: 'POST', body: { approved: a === 'approve' } });
+          else if (a === 'block' || a === 'unblock') await api(`/api/admin/users/${id}/block`, { method: 'POST', body: { blocked: a === 'block' } });
+          else if (a === 'del') await api('/api/admin/users/' + id, { method: 'DELETE' });
+          else if (a === 'delvac') await api('/api/admin/vacancies/' + id, { method: 'DELETE' });
+          toast('Готово ✓'); a === 'delvac' ? vacs() : users();
+        } catch (err) { fail(err); }
+      });
+      initTabs(n => { ({ overview, users, vacancies: vacs, support: threads }[n])().catch(fail); });
+      setInterval(() => { if (!document.hidden && $('[data-pane=support]') && !$('[data-pane=support]').hidden) { threads().catch(() => {}); pane?.(false).catch(() => {}); } }, 4000);
+    }
+  }
+  main();
+})();

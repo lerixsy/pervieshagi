@@ -1,0 +1,7 @@
+{
+  "name": "pervyj-shag",
+  "version": "2.0.0",
+  "main": "index.js",
+  "scripts": { "start": "node --env-file=.env index.js" },
+  "dependencies": { "bcryptjs": "^2.4.3", "express": "^4.19.2", "nodemailer": "^6.9.15", "pg": "^8.13.0" }
+}
