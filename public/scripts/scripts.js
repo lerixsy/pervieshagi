@@ -1,5 +1,6 @@
 (() => {
   const root = document.documentElement;
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const $$ = s => [...document.querySelectorAll(s)];
   // d: [фон тёмной, акцент], l: [фон светлой]
   const PAL = [
@@ -10,7 +11,7 @@
     { id: 'ruby', name: 'Бордо', d: ['#0b0406', '#ff8fa3'], l: ['#faf0f0'] },
     { id: 'amethyst', name: 'Аметист', d: ['#07050d', '#c4a6ff'], l: ['#f3f0fa'] }
   ];
-  const DEF = { mode: 'dark', palette: 'mono', particles: true, density: 1, speed: 1, glow: 1, grain: true, radius: 20, font: 1, motion: true };
+  const DEF = { mode: 'auto', palette: 'mono', particles: true, density: 1, speed: 1, glow: 1, grain: true, radius: 20, font: 1, motion: true };
   let S = { ...DEF };
   try {
     const saved = JSON.parse(localStorage.getItem('settings') || 'null');
@@ -20,26 +21,33 @@
   const mq = matchMedia('(prefers-color-scheme: dark)');
   function apply() {
     const dark = S.mode === 'auto' ? mq.matches : S.mode === 'dark';
-    root.dataset.theme = dark ? 'dark' : 'light'; root.dataset.palette = S.palette; root.dataset.motion = S.motion ? 'on' : 'off';
+    root.dataset.theme = dark ? 'dark' : 'light'; root.dataset.palette = S.palette; root.dataset.motion = S.motion && !reducedMotion.matches ? 'on' : 'off';
     root.style.setProperty('--gk', S.glow); root.style.setProperty('--r', S.radius + 'px'); root.style.setProperty('--fs', S.font);
     root.style.setProperty('--grain', S.grain ? '' : '0');
   }
   mq.addEventListener('change', () => { if (S.mode === 'auto') apply(); });
   apply();
+  reducedMotion.addEventListener('change', () => { apply(); pc(); });
+  root.classList.remove('no-js');
   let sync = () => {}, pc = () => {};
-  const commit = () => { apply(); save(); sync(); pc(); };
+  let tm;
+  const commit = () => { // плавная смена темы и палитры
+    root.classList.add('theming'); clearTimeout(tm); tm = setTimeout(() => root.classList.remove('theming'), 800);
+    apply(); save(); sync(); pc();
+  };
 
   const tb = document.getElementById('theme');
   if (tb) tb.addEventListener('click', () => { S.mode = root.dataset.theme === 'dark' ? 'light' : 'dark'; commit(); });
 
   // ---- прогресс, появление блоков, подсветка карточек ----
   const bar = document.querySelector('.progress'), header = document.querySelector('header');
+  let scrollFrame = 0;
   const onScroll = () => {
     const h = document.body.scrollHeight - innerHeight;
     if (bar) bar.style.width = (h > 0 ? scrollY / h * 100 : 0) + '%';
     if (header) header.classList.toggle('scrolled', scrollY > 10);
   };
-  addEventListener('scroll', onScroll, { passive: true }); onScroll();
+  addEventListener('scroll', () => { if (!scrollFrame) scrollFrame = requestAnimationFrame(() => { onScroll(); scrollFrame = 0; }); }, { passive: true }); onScroll();
   const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } }), { threshold: .15 });
   $$('.reveal').forEach(el => io.observe(el));
   document.addEventListener('pointermove', e => {
@@ -54,7 +62,7 @@
   const sw = (k, label) => `<label class="sw"><span>${label}</span><input type="checkbox" data-key="${k}"><i></i></label>`;
   const ui = document.createElement('div'); ui.id = 'settings';
   ui.innerHTML = `<div class="sbk"></div><aside class="sdrawer" aria-label="Настройки">
-    <div class="shead"><b>Настройки</b><button class="theme sclose" aria-label="Закрыть">✕</button></div>
+    <div class="shead"><b>Настройки</b><button class="theme sclose" aria-label="Закрыть"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     <div class="sbody">
       <div class="sgroup"><h4>Режим</h4><div class="seg"><button data-v="dark">Тёмный</button><button data-v="light">Светлый</button><button data-v="auto">Авто</button></div></div>
       <div class="sgroup"><h4>Цветовая палитра</h4><div class="pals">${PAL.map(p => `<button class="pal" data-v="${p.id}" style="--a:${p.d[0]};--b:${p.l[0]};--c:${p.d[1]}"><i></i>${p.name}</button>`).join('')}</div></div>
@@ -93,28 +101,38 @@
   sync();
 
   // ---- частицы снизу вверх (цвет из палитры и темы, параметры из настроек) ----
-  const cv = document.createElement('canvas'); cv.id = 'bg'; document.body.prepend(cv);
-  const ctx = cv.getContext('2d');
-  const OS = matchMedia('(prefers-reduced-motion: reduce)').matches ? .35 : 1;
+  const cv = document.createElement('canvas'); cv.id = 'bg'; cv.setAttribute('aria-hidden', 'true'); document.body.prepend(cv);
+  const ctx = cv.getContext('2d', { alpha: true });
+  if (!ctx) return;
+  let lastTick = 0;
+  const mobile = matchMedia('(pointer: coarse)').matches;
   let W, H, ps = [], col = '235,235,240', raf = 0;
   const readCol = () => { col = getComputedStyle(root).getPropertyValue('--p').trim() || col; };
   new MutationObserver(readCol).observe(root, { attributes: true, attributeFilter: ['data-theme', 'data-palette'] }); readCol();
   const mk = (init, big) => ({ big, x: Math.random() * W, y: init ? Math.random() * H : H + 60,
     r: big ? Math.random() * 40 + 24 : Math.random() * 2 + .8,
     v: big ? Math.random() * .15 + .06 : Math.random() * .6 + .2,
-    a: big ? Math.random() * .07 + .04 : Math.random() * .5 + .4, ph: Math.random() * 6.28, s: Math.random() * .6 + .2 });
+    a: big ? Math.random() * .08 + .06 : Math.random() * .42 + .34, ph: Math.random() * 6.28, s: Math.random() * .6 + .2 });
   const build = () => {
-    ps = [...Array.from({ length: Math.floor(Math.min(110, W / 12) * S.density) }, () => mk(true, false)),
-          ...Array.from({ length: Math.round(7 * Math.min(S.density, 1.5)) }, () => mk(true, true))];
+    ps = [...Array.from({ length: Math.floor(Math.min(mobile ? 38 : 80, W / 15) * S.density) }, () => mk(true, false)),
+          ...Array.from({ length: Math.round((mobile ? 3 : 6) * Math.min(S.density, 1.5)) }, () => mk(true, true))];
   };
   const size = () => {
     const d = Math.min(devicePixelRatio || 1, 2); W = innerWidth; H = innerHeight;
     cv.width = W * d; cv.height = H * d; ctx.setTransform(d, 0, 0, d, 0, 0); build();
   };
-  addEventListener('resize', size);
-  function tick() {
+  let resizeTimer;
+  addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { size(); pc(); }, 120); });
+  function tick(time = performance.now()) {
+    raf = 0;
+    if (document.hidden) return;
     if (!S.particles) { ctx.clearRect(0, 0, W, H); raf = 0; return; }
-    const sp = (S.motion ? S.speed : 0) * OS, k = Math.min(sp, 1);
+    const animate = true; // частицы живут по своему переключателю «Показывать частицы»
+    const slow = reducedMotion.matches || !S.motion ? .45 : 1;
+    const elapsed = Math.min((time - (lastTick || time - 16.67)) / 16.67, 2);
+    if (animate && mobile && time - lastTick < 32) { raf = requestAnimationFrame(tick); return; }
+    lastTick = time;
+    const sp = S.speed * slow * (slow === 1 ? 1.2 : 1) * elapsed, k = Math.min(sp, 1);
     ctx.clearRect(0, 0, W, H);
     for (const p of ps) {
       p.y -= p.v * sp; p.ph += .01 * k; p.x += Math.sin(p.ph) * p.s * .4 * k;
@@ -124,12 +142,13 @@
         const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
         g.addColorStop(0, `rgba(${col},${a})`); g.addColorStop(1, `rgba(${col},0)`);
         ctx.shadowBlur = 0; ctx.fillStyle = g;
-      } else { ctx.fillStyle = ctx.shadowColor = `rgba(${col},${a})`; ctx.shadowBlur = p.r * 7; }
+      } else { ctx.fillStyle = ctx.shadowColor = `rgba(${col},${a})`; ctx.shadowBlur = mobile ? 0 : p.r * 4; }
       ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
     }
-    raf = requestAnimationFrame(tick);
+    if (animate) raf = requestAnimationFrame(tick);
   }
-  pc = () => { build(); if (S.particles && !raf) tick(); };
+  pc = () => { if (raf) cancelAnimationFrame(raf); raf = 0; lastTick = 0; build(); tick(); };
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { cancelAnimationFrame(raf); raf = 0; } else { lastTick = 0; tick(); } });
   size(); tick();
 
   // ---- показать/скрыть пароль ----
@@ -141,20 +160,86 @@
     w.appendChild(b);
   });
 
-  // ---- бургер-меню ----
+  // ---- единая навигация: одинаковое поведение на всех страницах ----
+  const groups = [...document.querySelectorAll('.nav-group')];
+  const setGroupOpen = (group, open) => {
+    const button = group.querySelector('.nav-disclosure');
+    const menu = group.querySelector('.nav-dropdown');
+    if (!button || !menu) return;
+    button.setAttribute('aria-expanded', String(open));
+    group.classList.toggle('open', open);
+    menu.hidden = !open;
+  };
+  const closeGroups = (except = null) => groups.forEach(group => {
+    if (group !== except) setGroupOpen(group, false);
+  });
   const rightEl = document.querySelector('.right'), linksEl = document.querySelector('.links');
+  let burger = null;
+  const setMainMenu = open => {
+    if (!linksEl || !burger) return;
+    linksEl.classList.toggle('open', open);
+    burger.setAttribute('aria-expanded', String(open));
+    if (!open) closeGroups();
+  };
+  groups.forEach(group => {
+    const button = group.querySelector('.nav-disclosure'), menu = group.querySelector('.nav-dropdown');
+    if (!button || !menu) return;
+    setGroupOpen(group, false);
+    const open = () => { closeGroups(group); setGroupOpen(group, true); };
+    button.addEventListener('click', () => {
+      if (button.getAttribute('aria-expanded') === 'true') setGroupOpen(group, false);
+      else open();
+    });
+    button.addEventListener('keydown', e => {
+      if (!['ArrowDown', 'ArrowUp'].includes(e.key)) return;
+      e.preventDefault(); open();
+      const items = [...menu.querySelectorAll('a')];
+      (e.key === 'ArrowUp' ? items.at(-1) : items[0])?.focus();
+    });
+    menu.addEventListener('keydown', e => {
+      const items = [...menu.querySelectorAll('a')], i = items.indexOf(document.activeElement);
+      if (!items.length) return;
+      const target = { ArrowDown: (i + 1) % items.length, ArrowUp: (i - 1 + items.length) % items.length, Home: 0, End: items.length - 1 }[e.key];
+      if (target !== undefined) { e.preventDefault(); items[target].focus(); }
+    });
+    group.addEventListener('focusout', e => {
+      if (!group.contains(e.relatedTarget)) setGroupOpen(group, false);
+    });
+    menu.addEventListener('click', e => {
+      if (e.target.closest('a')) { closeGroups(); setMainMenu(false); }
+    });
+  });
   if (rightEl && linksEl) {
-    const bg = document.createElement('button'); bg.className = 'theme burger'; bg.setAttribute('aria-label', 'Меню');
-    bg.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';
-    rightEl.appendChild(bg);
-    bg.onclick = e => { e.stopPropagation(); linksEl.classList.toggle('open'); };
-    document.addEventListener('click', e => { if (!e.target.closest('.links')) linksEl.classList.remove('open'); });
-    linksEl.addEventListener('click', e => { if (e.target.closest('a')) linksEl.classList.remove('open'); });
+    burger = document.createElement('button'); burger.type = 'button'; burger.className = 'theme burger';
+    burger.setAttribute('aria-label', 'Основное меню'); burger.setAttribute('aria-controls', linksEl.id);
+    burger.setAttribute('aria-expanded', 'false');
+    burger.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>';
+    rightEl.appendChild(burger);
+    burger.addEventListener('click', () => setMainMenu(!linksEl.classList.contains('open')));
+    linksEl.addEventListener('click', e => { if (e.target.closest('a')) setMainMenu(false); });
+    matchMedia('(max-width: 1000px)').addEventListener('change', () => setMainMenu(false));
   }
+  document.addEventListener('click', e => {
+    if (!e.target.closest('.nav-group')) closeGroups();
+    if (!linksEl?.contains(e.target) && !burger?.contains(e.target)) setMainMenu(false);
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    const activeGroup = groups.find(group => group.classList.contains('open'));
+    if (activeGroup) {
+      e.preventDefault(); setGroupOpen(activeGroup, false);
+      activeGroup.querySelector('.nav-disclosure')?.focus();
+    } else if (linksEl?.classList.contains('open')) {
+      setMainMenu(false); burger?.focus();
+    }
+  });
+
+  document.querySelectorAll('.footer-settings').forEach(b => b.onclick = () => { window.openSettings(); ui.querySelector('.sclose').focus(); });
 
   // ---- анимированные счётчики ----
   const run = el => {
     const to = Number(el.dataset.count) || 0, suf = el.dataset.suffix || '', t0 = performance.now();
+    if (!S.motion || reducedMotion.matches) { el.textContent = to + suf; return; }
     const step = t => { const p = Math.min(1, (t - t0) / 1000); el.textContent = Math.round(to * (1 - Math.pow(1 - p, 3))) + suf; if (p < 1) requestAnimationFrame(step); };
     requestAnimationFrame(step);
   };
@@ -164,7 +249,7 @@
 
   // ---- конфетти ----
   window.burst = (x, y) => {
-    if (!S.motion) return;
+    if (!S.motion || reducedMotion.matches) return;
     for (let i = 0; i < 28; i++) {
       const el = document.createElement('i'); el.className = 'cf';
       el.style.left = x + 'px'; el.style.top = y + 'px';
@@ -176,17 +261,46 @@
     }
   };
 
-  // ---- 3D-наклон карточки и смена слов в заголовке ----
-  if (matchMedia('(hover:hover)').matches) {
-    document.addEventListener('pointermove', e => {
-      const t = e.target.closest && e.target.closest('[data-tilt]'); if (!t || !S.motion) return;
-      const r = t.getBoundingClientRect(), x = (e.clientX - r.left) / r.width - .5, y = (e.clientY - r.top) / r.height - .5;
-      t.style.transform = `perspective(900px) rotateY(${x * 9}deg) rotateX(${-y * 9}deg)`;
+  // ---- отдельные слои парения и интерактивного наклона: без конфликтов с reveal ----
+  const finePointer = matchMedia('(hover: hover) and (pointer: fine)');
+  $$('[data-tilt]').forEach(t => {
+    const scene = t.closest('.profile-scene') || t;
+    let frame = 0, drag = null, target = { x: 0, y: 0, rx: 0, ry: 0 };
+    const allowed = e => finePointer.matches && e.pointerType !== 'touch' && S.motion && !reducedMotion.matches;
+    const clamp = (n, max) => Math.max(-max, Math.min(max, n));
+    const update = next => {
+      target = next;
+      if (!frame) frame = requestAnimationFrame(() => {
+        frame = 0;
+        t.style.setProperty('--profile-x', target.x.toFixed(2) + 'px'); t.style.setProperty('--profile-y', target.y.toFixed(2) + 'px');
+        t.style.setProperty('--profile-rx', target.rx.toFixed(2) + 'deg'); t.style.setProperty('--profile-ry', target.ry.toFixed(2) + 'deg');
+      });
+    };
+    const reset = () => { drag = null; t.classList.remove('dragging'); update({ x: 0, y: 0, rx: 0, ry: 0 }); };
+    t.addEventListener('pointermove', e => {
+      if (!allowed(e)) return reset();
+      if (drag) {
+        const x = clamp(e.clientX - drag.x, 24), y = clamp(e.clientY - drag.y, 24);
+        update({ x, y, rx: -y / 5, ry: x / 5 });
+      } else {
+        const r = scene.getBoundingClientRect(), x = clamp((e.clientX - r.left) / r.width - .5, .5), y = clamp((e.clientY - r.top) / r.height - .5, .5);
+        update({ x: x * 10, y: y * 8, rx: -y * 12, ry: x * 12 });
+      }
     });
-    document.addEventListener('pointerout', e => { const t = e.target.closest && e.target.closest('[data-tilt]'); if (t && !t.contains(e.relatedTarget)) t.style.transform = ''; });
-  }
+    t.addEventListener('pointerdown', e => {
+      if (!allowed(e) || e.button !== 0 || e.target.closest('a,button,input,textarea,select')) return;
+      drag = { x: e.clientX, y: e.clientY }; t.setPointerCapture(e.pointerId); t.classList.add('dragging'); e.preventDefault();
+    });
+    t.addEventListener('pointerup', e => { if (t.hasPointerCapture(e.pointerId)) t.releasePointerCapture(e.pointerId); reset(); });
+    t.addEventListener('pointercancel', reset); t.addEventListener('lostpointercapture', reset);
+    t.addEventListener('pointerleave', () => { if (!drag) reset(); });
+    new MutationObserver(() => { if (root.dataset.motion === 'off') reset(); }).observe(root, { attributes: true, attributeFilter: ['data-motion'] });
+  });
+  // смена слов в заголовке: слова лежат друг на друге в одной ячейке (высота не прыгает), плавный кросс-фейд
   $$('.rot').forEach(el => {
     const w = el.dataset.words.split('|'); let i = 0;
-    setInterval(() => { if (!S.motion || document.hidden) return; el.classList.add('swap'); setTimeout(() => { i = (i + 1) % w.length; el.textContent = w[i]; el.classList.remove('swap'); }, 450); }, 3400);
+    el.innerHTML = '<span class="sr-only">' + w[0].replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</span>' + w.map((t, k) => `<span aria-hidden="true" class="rw${k ? '' : ' on'}">${t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</span>`).join('');
+    const items = [...el.querySelectorAll('.rw')];
+    setInterval(() => { if (!S.motion || reducedMotion.matches || document.hidden) return; items[i].classList.remove('on'); i = (i + 1) % items.length; items[i].classList.add('on'); }, 4800);
   });
 })();

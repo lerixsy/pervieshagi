@@ -8,7 +8,7 @@
   const ago = s => { const d = (Date.now() - new Date(s)) / 1000; return d < 60 ? 'только что' : d < 3600 ? Math.floor(d / 60) + ' мин назад' : d < 86400 ? Math.floor(d / 3600) + ' ч назад' : when(s); };
   const card = i => `<div class="card vac">${i}</div>`;
   const ST = { new: 'На рассмотрении', interview: 'Собеседование', offer: 'Оффер', accepted: 'Принято', declined: 'Отклонено' };
-  const GUARD = { dashboard: ['student', 'company'], profile: ['student'], vacancies: ['student'], company: ['company'], chat: ['student', 'company'],
+  const GUARD = { 'student-profile': ['student', 'company', 'admin'], dashboard: ['student', 'company'], profile: ['student'], company: ['company'], chat: ['student', 'company'],
     support: ['student', 'company'], admin: ['admin'], account: ['student', 'company', 'admin'], verify: ['student', 'company', 'admin'], resume: ['student', 'company', 'admin'] };
   const IC = {
     reply: 'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8zM19 8v6M22 11h-6', invite: 'M12 2l3 6.5 7 .9-5.2 4.8 1.4 7L12 17.8 5.8 21.2l1.4-7L2 9.4l7-.9z',
@@ -33,7 +33,7 @@
       body: o.body ? JSON.stringify(o.body) : undefined
     });
     const d = await r.json().catch(() => ({}));
-    if (r.status === 401 && token()) { localStorage.removeItem('token'); localStorage.removeItem('role'); if (d.error && d.error !== 'Требуется вход') sessionStorage.setItem('flash', d.error); location.href = '/pages/login.html'; }
+    if (r.status === 401 && token()) { localStorage.removeItem('token'); localStorage.removeItem('role'); if (d.error && d.error !== 'Требуется вход') sessionStorage.setItem('flash', d.error); if (!['home', 'vacancies', 'partners', 'help', 'vacancy', 'company-profile'].includes(page)) location.href = '/pages/login.html'; }
     if (!r.ok) { const e = new Error(d.error || (r.status === 404 || r.status === 405 ? 'Сервер не знает этого запроса — замените файлы в server/ и перезапустите сервер' : 'Что-то пошло не так')); e.code = d.code; throw e; }
     return d;
   }
@@ -47,6 +47,21 @@
   const hashIn = list => list.includes(location.hash.slice(1)) ? location.hash.slice(1) : list[0];
   const boom = e => { const r = e.target.getBoundingClientRect(); window.burst?.(r.left + r.width / 2, r.top + r.height / 2); };
   const tagsOf = v => [v.city, v.format, v.category, v.paid ? 'Оплачиваемо' : null].filter(Boolean).map(t => `<span class="tag">${esc(t)}</span>`).join('');
+  const vacancyUrl = id => '/pages/vacancy.html?id=' + encodeURIComponent(id);
+  const companyUrl = id => '/pages/company-profile.html?id=' + encodeURIComponent(id);
+  const studentUrl = id => '/pages/student-profile.html?id=' + encodeURIComponent(id);
+  const companyLink = v => v.company_id ? `<a class="entity-link" href="${companyUrl(v.company_id)}">${esc(v.company)}</a>` : `<span>${esc(v.company)}</span>`;
+  const bookmark = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12v17l-6-4-6 4z"/></svg>';
+  const vacancyCard = (v, showFav = false, manage = false) => `<article id="vacancy-${v.id}" class="vacancy-card card">
+    <div class="vacancy-card-top"><span class="vacancy-company">${companyLink(v)}</span>${showFav ? `<button class="fav ${v.fav ? 'on' : ''}" data-do="fav" data-id="${v.id}" aria-label="${v.fav ? 'Удалить из избранного' : 'Добавить в избранное'}" aria-pressed="${!!v.fav}">${bookmark}</button>` : ''}</div>
+    <h3><a class="vacancy-card-link" href="${vacancyUrl(v.id)}">${esc(v.title)}</a></h3>
+    <div class="tags">${tagsOf(v)}</div><p class="vacancy-excerpt">${esc(v.description || 'Подробнее о задачах и условиях — на странице вакансии.')}</p>
+    <div class="vacancy-card-bottom"><span>${v.is_active === false ? 'Закрыта' : v.applied ? 'Отклик отправлен' : v.match != null ? esc(v.match) + '% совпадение' : v.created_at ? 'Опубликовано ' + new Date(v.created_at).toLocaleDateString('ru', {day:'numeric', month:'short'}) : ''}</span><span class="vacancy-more" aria-hidden="true">Подробнее <span>↗</span></span></div>
+    ${manage ? `<div class="vacancy-management"><span class="muted">Откликов: ${v.responses || 0}</span><div class="qa"><button class="btn sm" data-vdo="toggle" data-id="${v.id}">${v.is_active ? 'Закрыть' : 'Открыть'}</button><button class="btn sm" data-vdo="del" data-id="${v.id}">Удалить</button></div></div>` : ''}
+  </article>`;
+  const safeWebsite = value => {
+    try { const u = new URL(/^https?:\/\//i.test(value) ? value : 'https://' + value); return /^https?:$/.test(u.protocol) ? u.href : null; } catch { return null; }
+  };
   const matchRow = v => v.match == null ? '' : `<div class="mrow"><span class="mpill ${v.match >= 70 ? 'hi' : ''}" style="--v:${v.match}"><b>${v.match}%</b> совпадение</span>${(v.why || []).map(w => `<span class="tag why">${esc(w)}</span>`).join('')}</div>`;
   const bub = m => `<div class="msg ${m.mine ? 'me' : ''}"><p>${esc(m.text)}</p><small>${when(m.created_at)}</small></div>`;
   const mkPane = (el, url, empty) => {
@@ -134,15 +149,24 @@
   let pcache = null;
   const coverTpl = (p, title) => `Здравствуйте!\n\nМеня зовут ${p.full_name || '…'}${p.age ? ', мне ' + p.age : ''}. ${p.university ? 'Учусь в ' + p.university : 'Учусь'}${p.specialty ? ' по направлению «' + p.specialty + '»' : ''}. Меня заинтересовала вакансия «${title}».\n\n${p.skills ? 'Мои навыки: ' + p.skills + '.\n\n' : ''}${p.desired_experience ? 'Хочу получить опыт: ' + p.desired_experience + '.\n\n' : ''}Буду рад(а) возможности поработать в вашей команде и быстро научиться. Спасибо за внимание!`;
   function openApply(id, title, onDone) {
+    const active = document.activeElement, oldOverflow = document.body.style.overflow;
     const bk = document.createElement('div'); bk.className = 'mbk';
-    bk.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>Отклик на «${esc(title)}»</h3>
+    bk.innerHTML = `<div class="modal" role="dialog" aria-modal="true" aria-labelledby="apply-title"><h3 id="apply-title">Отклик на «${esc(title)}»</h3>
       <p class="lead">Сопроводительное письмо помогает выделиться — расскажите, почему вам интересна вакансия. Это необязательно.</p>
-      <textarea maxlength="1500" placeholder="Здравствуйте! Меня зовут…"></textarea>
+      <textarea aria-label="Сопроводительное письмо" maxlength="1500" placeholder="Здравствуйте! Меня зовут…"></textarea>
       <div class="mcount"><button type="button" class="linkbtn" id="mtpl">Вставить шаблон из профиля</button><span><b id="mn">0</b> / 1500</span></div>
       <div class="mact"><button class="btn" id="mcancel" type="button">Отмена</button><button class="btn primary" id="msend" type="button">Отправить отклик</button></div></div>`;
     document.body.appendChild(bk);
-    const ta = bk.querySelector('textarea'), close = () => { bk.remove(); removeEventListener('keydown', onKey); };
-    const onKey = e => { if (e.key === 'Escape') close(); };
+    document.body.style.overflow = 'hidden';
+    const ta = bk.querySelector('textarea'), close = () => { bk.remove(); document.body.style.overflow = oldOverflow; removeEventListener('keydown', onKey); active?.focus({ preventScroll: true }); };
+    const onKey = e => {
+      if (e.key === 'Escape') close();
+      if (e.key === 'Tab') {
+        const els = [...bk.querySelectorAll('button:not(:disabled),textarea')], first = els[0], last = els[els.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    };
     addEventListener('keydown', onKey); ta.focus();
     ta.oninput = () => { bk.querySelector('#mn').textContent = ta.value.length; };
     bk.addEventListener('click', e => { if (e.target === bk) close(); });
@@ -162,10 +186,22 @@
 
   async function main() {
     let me = null;
-    if (token()) { try { me = await api('/api/me'); localStorage.setItem('role', me.role); } catch { return; } }
+    if (token()) { try { me = await api('/api/me'); localStorage.setItem('role', me.role); } catch { if (!['home', 'vacancies', 'partners', 'help', 'vacancy', 'company-profile'].includes(page)) return; } }
     const rule = GUARD[page];
-    if (rule) { if (!me) return location.href = '/pages/login.html'; if (!rule.includes(me.role)) return location.href = cabinet(); }
-    if (['login', 'register', 'forgot'].includes(page) && me) return location.href = cabinet();
+    if (rule) { if (!me) { sessionStorage.setItem('authReturn', location.pathname + location.search + location.hash); return location.href = '/pages/login.html'; } if (!rule.includes(me.role)) return location.href = cabinet(); }
+    const allowedReturn = value => {
+      if (typeof value !== 'string') return null;
+      if (/^\/pages\/(vacancies|support)\.html(?:#[a-z0-9_-]+)?$/i.test(value)) return value;
+      return /^\/pages\/(vacancy|company-profile|student-profile)\.html\?id=(?:[1-9]\d*|me)$/i.test(value) ? value : null;
+    };
+    const queryReturn = allowedReturn(new URLSearchParams(location.search).get('next'));
+    if (queryReturn) sessionStorage.setItem('authReturn', queryReturn);
+    const afterAuth = () => {
+      const target = allowedReturn(sessionStorage.getItem('authReturn'));
+      sessionStorage.removeItem('authReturn');
+      return target || cabinet();
+    };
+    if (['login', 'register', 'forgot'].includes(page) && me) return location.href = afterAuth();
     if (page === 'profile') return location.href = '/pages/account.html#profile';
     const flash = sessionStorage.getItem('flash'); if (flash) { sessionStorage.removeItem('flash'); toast(flash); }
 
@@ -184,7 +220,7 @@
         const mi = (h, i, t) => `<a href="${h}">${icon(i)}<span>${t}</span></a>`;
         um.innerHTML = `<button class="uavatar" aria-label="Меню профиля">${esc(me.email[0].toUpperCase())}</button>
           <div class="udrop"><div class="uhead"><b>${lab}</b><small>${esc(me.email)}</small></div>
-          ${mi('/', 'home', 'На главную')}${me.role === 'admin' ? '' : mi(accLink, 'user', me.role === 'company' ? 'Профиль компании' : 'Мой профиль')}${mi('/pages/account.html#security', 'lock', 'Безопасность')}${me.role === 'admin' ? '' : mi('/pages/support.html', 'help', 'Поддержка')}<button class="ul" id="open-set">${icon('sliders')}<span>Оформление и тема</span></button><hr>
+          ${mi('/', 'home', 'На главную')}${me.role === 'admin' ? '' : mi(accLink, 'user', me.role === 'company' ? 'Профиль компании' : 'Мой профиль')}${me.id && me.role !== 'admin' ? mi(me.role === 'company' ? companyUrl(me.id) : studentUrl(me.id), 'user', 'Посмотреть профиль') : ''}${mi('/pages/account.html#security', 'lock', 'Безопасность')}${me.role === 'admin' ? '' : mi('/pages/support.html', 'help', 'Поддержка')}<button class="ul" id="open-set">${icon('sliders')}<span>Оформление и тема</span></button><hr>
           <button class="ul" id="logout">${icon('out')}<span>Выйти</span></button></div>`;
         const br = $('.burger'); br ? $('.right').insertBefore(um, br) : $('.right').appendChild(um);
         const dd = um.querySelector('.udrop');
@@ -208,10 +244,38 @@
     }
 
     // ---- главная: живые цифры ----
-    if (page === 'home') fetch('/api/public/stats').then(r => r.json()).then(s => {
-      for (const [k, v] of Object.entries(s)) { const el = $('#n-' + k); if (el) el.dataset.count = v; }
-      watchCounts($('#numbers'));
-    }).catch(() => {});
+    if (page === 'home') {
+      fetch('/api/public/stats').then(r => { if (!r.ok) throw new Error('Статистика недоступна'); return r.json(); }).then(s => {
+        for (const [k, v] of Object.entries(s)) { const el = $('#n-' + k); if (el) el.dataset.count = v; }
+        watchCounts($('#numbers'));
+      }).catch(() => {});
+      const partners = $('#home-partners-list'), more = $('#partners-more'), retry = $('#partners-retry'), status = $('#partners-status');
+      let offset = 0, loading = false;
+      const countText = (n, words) => { const x = Math.abs(n) % 100, y = x % 10; return words[x > 10 && x < 20 ? 2 : y === 1 ? 0 : y > 1 && y < 5 ? 1 : 2]; };
+      const partnerCard = c => {
+        const responses = Math.max(0, Number(c.responses) || 0), vacancies = Math.max(0, Number(c.active_vacancies) || 0);
+        const initials = String(c.name || 'Компания').trim().split(/\s+/).slice(0,2).map(x => [...x][0]).join('').toUpperCase();
+        return `<a class="partner-card card" href="${companyUrl(c.user_id)}"><div class="partner-card-top"><span class="partner-monogram" aria-hidden="true">${esc(initials)}</span><span class="partner-arrow" aria-hidden="true">↗</span></div><h4>${esc(c.name)}</h4><p class="partner-meta">${[c.industry,c.city].filter(Boolean).map(esc).join(' · ') || 'Компания-партнёр платформы'}</p><div class="partner-count"><b>${responses.toLocaleString('ru-RU')}</b><span>${countText(responses,['полученный отклик','полученных отклика','полученных откликов'])}</span></div><div class="partner-card-bottom"><span>${vacancies.toLocaleString('ru-RU')} ${countText(vacancies,['открытая вакансия','открытые вакансии','открытых вакансий'])}</span><span>Профиль компании →</span></div></a>`;
+      };
+      async function loadPartners() {
+        if (loading || offset === null) return;
+        loading = true; partners.setAttribute('aria-busy','true'); more.disabled = true; retry.hidden = true; status.textContent = '';
+        try {
+          const r = await fetch('/api/public/companies?offset=' + offset);
+          if (!r.ok) throw new Error('Не удалось загрузить компании');
+          const d = await r.json(); if (!Array.isArray(d.items)) throw new Error('Некорректный ответ сервера');
+          if (offset === 0) partners.innerHTML = '';
+          partners.insertAdjacentHTML('beforeend', d.items.map(partnerCard).join(''));
+          if (!partners.children.length) partners.innerHTML = '<p class="partners-status">Проверенные компании скоро появятся здесь.</p>';
+          offset = Number.isSafeInteger(d.nextOffset) && d.nextOffset >= 0 ? d.nextOffset : null;
+          more.hidden = offset === null; status.textContent = `Показано компаний: ${partners.querySelectorAll('.partner-card').length}`;
+        } catch (err) {
+          if (!partners.querySelector('.partner-card')) partners.innerHTML = '<p class="partners-status">Список компаний временно недоступен.</p>';
+          status.textContent = 'Попробуйте загрузить список ещё раз.'; retry.hidden = false; more.hidden = true;
+        } finally { loading = false; more.disabled = false; partners.setAttribute('aria-busy','false'); }
+      }
+      more.onclick = retry.onclick = loadPartners; loadPartners();
+    }
 
     // ---- вход / регистрация ----
     const af = $('#auth-form');
@@ -229,7 +293,7 @@
           const d = await api(af.dataset.url, { method: 'POST', body: Object.fromEntries(new FormData(af)) });
           localStorage.setItem('token', d.token); localStorage.setItem('role', d.role);
           d.devCode ? sessionStorage.setItem('devCode', d.devCode) : sessionStorage.removeItem('devCode');
-          location.href = d.verified ? cabinet() : '/pages/verify.html';
+          location.href = d.verified ? afterAuth() : '/pages/verify.html';
         } catch (err) { fail(err); btn.disabled = false; }
       });
     }
@@ -237,7 +301,7 @@
     // ---- подтверждение email ----
     const vf = $('#verify-form');
     if (vf) {
-      if (me.verified) return location.href = cabinet();
+      if (me.verified) return location.href = afterAuth();
       $('#vemail').textContent = me.email;
       const showDev = c => { if (c) { $('#devhint').hidden = false; $('#devcode').textContent = c; } };
       showDev(sessionStorage.getItem('devCode'));
@@ -247,7 +311,7 @@
       rb.onclick = async () => { try { const d = await api('/api/verify/send', { method: 'POST' }); showDev(d.devCode); sessionStorage.setItem('devCode', d.devCode || ''); toast('Код отправлен'); clearTimeout(timer); cd = 60; tick(); } catch (err) { fail(err); } };
       vf.addEventListener('submit', async e => {
         e.preventDefault();
-        try { await api('/api/verify/confirm', { method: 'POST', body: { code: vf.elements.code.value } }); sessionStorage.removeItem('devCode'); window.burst?.(innerWidth / 2, innerHeight / 3); toast('Email подтверждён ✓'); setTimeout(() => location.href = cabinet(), 1100); }
+        try { await api('/api/verify/confirm', { method: 'POST', body: { code: vf.elements.code.value } }); sessionStorage.removeItem('devCode'); window.burst?.(innerWidth / 2, innerHeight / 3); toast('Email подтверждён ✓'); setTimeout(() => location.href = afterAuth(), 1100); }
         catch (err) { fail(err); }
       });
     }
@@ -301,7 +365,7 @@
         const d = await api('/api/dashboard');
         const hello = (t, p) => `<div class="rise"><span class="eyebrow">Обзор</span><h2>${t}</h2><p class="lead">${p}</p></div>`;
         if (d.kind === 'student') {
-          const picksHtml = d.picks.length ? d.picks.map(v => `<a class="mini" href="/pages/vacancies.html"><span>${esc(v.title)}<br><small>${esc(v.company)}${v.why.length ? ' · ' + esc(v.why[0]) : ''}</small></span><span class="mpill ${v.match >= 70 ? 'hi' : ''}" style="--v:${v.match}"><b>${v.match}%</b></span></a>`).join('')
+          const picksHtml = d.picks.length ? d.picks.map(v => `<a class="mini" href="${vacancyUrl(v.id)}"><span>${esc(v.title)}<br><small>${esc(v.company)}${v.why.length ? ' · ' + esc(v.why[0]) : ''}</small></span><span class="mpill ${v.match >= 70 ? 'hi' : ''}" style="--v:${v.match}"><b>${v.match}%</b></span></a>`).join('')
             : '<p style="color:var(--muted);margin-bottom:14px">Добавьте навыки и желаемый опыт в профиле — подберём вакансии с процентом совпадения.</p><a class="btn sm" href="/pages/account.html#profile">Заполнить профиль</a>';
           const rec = d.recent.length ? d.recent.map(a => `<div class="mini"><span>${esc(a.title)}<br><small>${esc(a.company)} · ${a.direction === 'company_to_student' ? 'приглашение' : 'отклик'}</small></span><span class="tag">${ST[a.status] || a.status}</span></div>`).join('') : '<p class="empty" style="padding:20px 0">Пока пусто — откликнитесь на первую вакансию</p>';
           dash.innerHTML = hello(`Привет, ${esc(d.name || 'студент')}`, 'Вот что происходит с вашими откликами и профилем.') + `<div class="dash">
@@ -313,7 +377,7 @@
             <div class="dcols"><div class="card rise" style="--d:.3s"><h4>Отклики за 7 дней</h4>${bars(d.series)}</div><div class="card rise" style="--d:.35s"><h4>Последняя активность</h4>${rec}</div></div>
             <div class="qa rise" style="--d:.4s"><a class="btn primary" href="/pages/vacancies.html">Найти вакансии</a><a class="btn" href="/pages/resume.html#me">Резюме в PDF</a><a class="btn" href="/pages/chat.html">Открыть чаты</a><a class="btn" href="/pages/support.html">Поддержка</a></div></div>`;
         } else if (d.kind === 'company') {
-          const top = d.top.length ? d.top.map(v => `<div class="mini"><span>${esc(v.title)}<br><small>${v.is_active ? 'активна' : 'закрыта'}</small></span><span class="tag">${v.responses} откл.</span></div>`).join('') : '<p class="empty" style="padding:20px 0">Опубликуйте первую вакансию</p>';
+          const top = d.top.length ? d.top.map(v => `<a class="mini" href="${vacancyUrl(v.id)}"><span>${esc(v.title)}<br><small>${v.is_active ? 'активна' : 'закрыта'}</small></span><span class="tag">${v.responses} откл.</span></a>`).join('') : '<p class="empty" style="padding:20px 0">Опубликуйте первую вакансию</p>';
           dash.innerHTML = hello(esc(d.name || 'Ваша компания'), 'Сводка по вакансиям, откликам и приглашениям.') + `<div class="dash">
             <div class="stats4">${statc(d.stats.vacancies, 'Активных вакансий', .05)}${statc(d.stats.responses, 'Откликов', .1)}${statc(d.stats.invites, 'Приглашений', .15)}${statc(d.stats.accepted, 'Принято', .2)}</div>
             <div class="dcols"><div class="card rise" style="--d:.25s"><h4>Отклики за 7 дней</h4>${bars(d.series)}</div><div class="card rise" style="--d:.3s"><h4>Лучшие вакансии</h4>${top}</div></div>
@@ -357,48 +421,176 @@
       });
     }
 
-    // ---- вакансии студента ----
+    // ---- общий вход для действий в публичном каталоге ----
+    function authGate(vacancyId, intent = 'apply') {
+      if (document.querySelector('.auth-gate')) return;
+      const returnTo = vacancyId ? vacancyUrl(vacancyId) : '/pages/vacancies.html';
+      sessionStorage.setItem('authReturn', returnTo);
+      if (vacancyId) sessionStorage.setItem('vacancyIntent', JSON.stringify({ id: String(vacancyId), action: intent }));
+      const active = document.activeElement;
+      const dialog = document.createElement('dialog'); dialog.className = 'auth-gate';
+      dialog.setAttribute('aria-labelledby', 'auth-gate-title');
+      dialog.innerHTML = `<button class="theme gate-close" aria-label="Закрыть"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button><span class="eyebrow">Всего один шаг</span><h2 id="auth-gate-title">Сохраните свой шанс</h2><p>Вакансии можно смотреть без регистрации. Чтобы откликаться, сохранять понравившиеся варианты и получать предложения, нужен аккаунт студента.</p><div class="gate-actions"><a class="btn primary" href="/pages/register.html?next=${encodeURIComponent(returnTo)}">Создать аккаунт</a><a class="btn" href="/pages/login.html?next=${encodeURIComponent(returnTo)}">Уже есть аккаунт? Войти</a></div><button class="linkbtn gate-cancel">Пока продолжить просмотр</button>`;
+      document.body.appendChild(dialog);
+      const close = () => dialog.close();
+      dialog.querySelector('.gate-close').onclick = close;
+      dialog.querySelector('.gate-cancel').onclick = close;
+      dialog.addEventListener('click', e => { if (e.target === dialog) { const r = dialog.getBoundingClientRect(); if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) close(); } });
+      dialog.addEventListener('close', () => { sessionStorage.removeItem('vacancyIntent'); sessionStorage.removeItem('authReturn'); dialog.remove(); active?.focus(); });
+      dialog.showModal();
+    }
+
+    // ---- отдельные страницы вакансии, компании и студента ----
+    const detailRoot = $('#vacancy-detail'), profileRoot = $('#entity-profile');
+    const entityId = new URLSearchParams(location.search).get('id');
+    const validEntityId = /^[1-9]\d*$/.test(entityId || '') || (page === 'student-profile' && entityId === 'me');
+    const renderEntityError = (root, err, retry) => {
+      root.setAttribute('aria-busy', 'false');
+      root.innerHTML = `<div class="entity-error card"><span class="eyebrow">Не удалось открыть страницу</span><h1>${esc(err.message || 'Ошибка загрузки')}</h1><p>Проверьте ссылку или попробуйте ещё раз.</p><div class="qa"><a class="btn" href="/pages/vacancies.html">К вакансиям</a>${retry ? '<button class="btn primary" data-retry>Повторить</button>' : ''}</div></div>`;
+      root.querySelector('[data-retry]')?.addEventListener('click', retry);
+    };
+    const facts = rows => `<dl class="entity-facts">${rows.filter(([,v]) => v != null && String(v).trim()).map(([k,v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>`;
+    async function loadVacancy() {
+      detailRoot.setAttribute('aria-busy', 'true');
+      try {
+        const v = await api((me ? '/api/vacancies/' : '/api/public/vacancies/') + entityId);
+        document.title = `${v.title} — Первый шаг`;
+        const isStudent = me?.role === 'student', active = v.is_active !== false;
+        const action = !me ? '<button class="btn primary" id="vacancy-apply">Откликнуться</button>' : isStudent ? `<button class="btn ${v.applied || !active ? '' : 'primary'}" id="vacancy-apply" ${v.applied || !active ? 'disabled' : ''}>${v.applied ? 'Отклик отправлен' : !active ? 'Вакансия закрыта' : 'Откликнуться'}</button>` : '<p class="muted">Откликнуться можно с аккаунта студента.</p>';
+        detailRoot.innerHTML = `<a class="back-link" href="/pages/vacancies.html">← Все вакансии</a>
+          <div class="entity-heading"><span class="eyebrow">${active ? 'Вакансия' : 'Архивная вакансия'}</span><h1>${esc(v.title)}</h1><div class="entity-subtitle">${companyLink(v)}</div><div class="tags">${tagsOf(v)}</div></div>
+          <div class="detail-layout"><aside class="detail-actions card" aria-label="Действия с вакансией"><h2>Следующий шаг</h2>${action}
+          ${!me || isStudent ? `<button class="btn ${v.fav ? 'saved' : ''}" id="vacancy-fav" aria-pressed="${!!v.fav}">${bookmark}<span>${v.fav ? 'В избранном' : 'В избранное'}</span></button>` : ''}
+          ${v.applied ? '<a class="text-link" href="/pages/vacancies.html#mine">Посмотреть мои отклики →</a>' : '<p class="muted">Расскажите о себе в сопроводительном письме — это поможет компании познакомиться с вами.</p>'}
+          ${v.company_id ? `<a class="text-link" href="${companyUrl(v.company_id)}">Профиль компании →</a>` : '<p class="muted">Компания пока не подключила профиль на платформе.</p>'}
+          </aside><div class="detail-copy card"><h2>О вакансии</h2><div class="prose">${esc(v.description || 'Компания пока не добавила описание.')}</div>
+          ${facts([['Город',v.city],['Формат',v.format],['Направление',v.category],['Оплата',v.paid ? 'Оплачиваемая стажировка' : 'Уточняется у компании']])}
+          ${v.created_at ? `<p class="muted">Опубликовано ${new Date(v.created_at).toLocaleDateString('ru')}</p>` : ''}</div></div>`;
+        detailRoot.setAttribute('aria-busy', 'false');
+        const apply = $('#vacancy-apply'), favorite = $('#vacancy-fav');
+        if (apply && !apply.disabled) apply.onclick = () => {
+          if (!me) return authGate(v.id, 'apply');
+          if (!me.verified) { sessionStorage.setItem('authReturn', vacancyUrl(v.id)); return location.href = '/pages/verify.html'; }
+          openApply(v.id, v.title, () => { toast('Отклик отправлен ✓'); loadVacancy(); });
+        };
+        if (favorite) favorite.onclick = async () => {
+          if (!me) return authGate(v.id, 'fav');
+          favorite.disabled = true;
+          try { const d = await api('/api/favorites/' + v.id, { method: 'POST' }); toast(d.fav ? 'Вакансия добавлена в избранное' : 'Вакансия удалена из избранного'); await loadVacancy(); }
+          catch (err) { favorite.disabled = false; fail(err); }
+        };
+        let pending = null;
+        try { pending = JSON.parse(sessionStorage.getItem('vacancyIntent') || 'null'); } catch { sessionStorage.removeItem('vacancyIntent'); }
+        if (isStudent && pending?.id === String(v.id) && (pending.action === 'fav' || me.verified)) {
+          sessionStorage.removeItem('vacancyIntent');
+          if (pending.action === 'apply' && active && !v.applied) apply?.click();
+          if (pending.action === 'fav' && !v.fav) favorite?.click();
+        }
+      } catch (err) { renderEntityError(detailRoot, err, loadVacancy); }
+    }
+    async function loadCompanyProfile() {
+      profileRoot.setAttribute('aria-busy', 'true');
+      try {
+        const d = await api('/api/public/companies/' + entityId), c = d.company;
+        document.title = `${c.name} — Первый шаг`;
+        const website = c.website && safeWebsite(c.website);
+        profileRoot.innerHTML = `<a class="back-link" href="/pages/vacancies.html">← Все вакансии</a><div class="entity-heading"><span class="eyebrow">Компания на платформе</span><h1>${esc(c.name)}</h1><p class="entity-subtitle">${[c.industry,c.city].filter(Boolean).map(esc).join(' · ')}</p></div>
+          <div class="company-summary card"><h2>О компании</h2><div class="prose">${esc(c.description || 'Компания пока не добавила описание.')}</div>${website ? `<a class="text-link external-link" href="${esc(website)}" target="_blank" rel="noopener noreferrer">Сайт компании ↗</a>` : ''}</div>
+          <div class="section-heading"><h2>Открытые вакансии</h2><span class="muted">${d.vacancies.length}</span></div><div class="vacancy-grid" id="company-vacancies">${d.vacancies.length ? d.vacancies.map(v => vacancyCard(v)).join('') : '<p class="empty">Сейчас открытых вакансий нет.</p>'}</div>`;
+        profileRoot.setAttribute('aria-busy', 'false');
+      } catch (err) { renderEntityError(profileRoot, err, loadCompanyProfile); }
+    }
+    async function loadStudentProfile() {
+      profileRoot.setAttribute('aria-busy', 'true');
+      try {
+        const p = await api('/api/students/' + entityId);
+        document.title = `${p.full_name} — Первый шаг`;
+        profileRoot.innerHTML = `<a class="back-link" href="${me.role === 'company' ? '/pages/company.html#students' : '/pages/account.html#profile'}">← ${me.role === 'company' ? 'К студентам' : 'В личный кабинет'}</a><div class="entity-heading"><span class="eyebrow">Профиль студента</span><h1>${esc(p.full_name)}</h1><p class="entity-subtitle">${[p.city,p.age && p.age + ' лет',p.university].filter(Boolean).map(esc).join(' · ')}</p><div class="qa">${p.can_resume ? `<a class="btn" href="/pages/resume.html#${p.user_id}">Открыть резюме</a>` : ''}${me.role === 'company' ? '<a class="btn primary" href="/pages/company.html#students">Открыть подбор студентов</a>' : ''}</div></div>
+          <div class="profile-sections"><section class="card"><h2>О себе</h2><div class="prose">${esc(p.about || 'Студент пока не добавил рассказ о себе.')}</div>${facts([['Образование',p.education],['Учебное заведение',p.university],['Специальность',p.specialty]])}</section>
+          <section class="card"><h2>Навыки и интересы</h2>${facts([['Навыки',p.skills],['Хочу получить опыт',p.desired_experience]])}${!p.skills && !p.desired_experience ? '<p class="muted">Информация пока не заполнена.</p>' : ''}</section>
+          ${p.work_history ? `<section class="card"><h2>Опыт</h2><div class="prose">${esc(p.work_history)}</div></section>` : ''}${p.portfolio ? `<section class="card"><h2>Портфолио</h2><div class="portfolio-links">${linkify(p.portfolio)}</div></section>` : ''}</div>`;
+        profileRoot.setAttribute('aria-busy', 'false');
+      } catch (err) { renderEntityError(profileRoot, err, loadStudentProfile); }
+    }
+    if (detailRoot || profileRoot) {
+      const root = detailRoot || profileRoot;
+      if (!validEntityId) renderEntityError(root, new Error('Некорректная ссылка'), null);
+      else if (detailRoot) loadVacancy();
+      else if (page === 'company-profile') loadCompanyProfile();
+      else loadStudentProfile();
+    }
+
+    // ---- публичный каталог и личные вакансии студента ----
     const list = $('#list');
     if (list) {
       const modes = ['vacancies', 'offers', 'mine'], tabs = $$('.tab');
-      let mode = hashIn(modes), dt;
+      const isStudent = me?.role === 'student';
+      let mode = isStudent ? hashIn(modes) : 'vacancies', dt, requestId = 0;
+      const note = $('#catalog-note');
+      if (isStudent) note.hidden = true;
+      else {
+        $('#f-sort').value = 'new';
+        $('#f-sort option[value=match]').disabled = true;
+        if (me) { note.textContent = 'Просмотр каталога. Откликаться могут пользователи с аккаунтом студента.'; $$('.tab[data-mode=offers],.tab[data-mode=mine]').forEach(el => el.hidden = true); $('#f-fav').hidden = true; }
+      }
+      const filterToggle = $('#filter-toggle'), filterFields = $('#filters-extra');
+      const filterMedia = matchMedia('(max-width: 700px)');
+      const syncFilters = () => {
+        const open = $('#filters').classList.contains('expanded');
+        filterToggle.setAttribute('aria-expanded', String(open));
+        filterFields.hidden = filterMedia.matches && !open;
+      };
+      filterToggle.onclick = () => { $('#filters').classList.toggle('expanded'); syncFilters(); };
+      filterMedia.addEventListener('change', syncFilters); syncFilters();
       const qs = () => new URLSearchParams({ q: $('#f-q').value.trim(), format: $('#f-format').value, category: $('#f-cat').value, paid: $('#f-paid').classList.contains('on') ? '1' : '', fav: $('#f-fav').classList.contains('on') ? '1' : '', sort: $('#f-sort').value }).toString();
       async function render() {
-        tabs.forEach(t => t.classList.toggle('active', t.dataset.mode === mode)); $('#filters').hidden = mode !== 'vacancies';
+        const currentRequest = ++requestId;
+        list.setAttribute('aria-busy', 'true');
+        tabs.forEach(t => t.classList.toggle('active', t.dataset.mode === mode)); $('#filters').hidden = mode !== 'vacancies'; list.classList.toggle('vacancy-grid', mode === 'vacancies');
         if (mode === 'vacancies') {
-          const vs = await api('/api/vacancies?' + qs());
-          const hint = vs.length && vs.every(v => v.match == null) ? '<div class="devhint">Добавьте навыки и желаемый опыт в <a class="linkbtn" href="/pages/account.html#profile">профиле</a> — мы покажем процент совпадения и подберём лучшие вакансии.</div>' : '';
-          list.innerHTML = hint + (vs.length ? vs.map(v => card(`<div><small>${esc(v.company)}</small><h3>${esc(v.title)}</h3>${matchRow(v)}<div class="tags">${tagsOf(v)}</div><p>${esc(v.description)}</p></div>
-            <div class="acts"><button class="fav ${v.fav ? 'on' : ''}" data-do="fav" data-id="${v.id}" aria-label="В избранное">♥</button>
-            <button class="btn ${v.applied ? '' : 'primary'}" data-do="apply" data-id="${v.id}" data-title="${esc(v.title)}" ${v.applied ? 'disabled' : ''}>${v.applied ? 'Отклик отправлен' : 'Откликнуться'}</button></div>`)).join('')
+          const vs = await api((isStudent ? '/api/vacancies?' : '/api/public/vacancies?') + qs());
+          if (currentRequest !== requestId) return;
+          list.setAttribute('aria-busy', 'false');
+          const hint = isStudent && vs.length && vs.every(v => v.match == null) ? '<div class="devhint">Добавьте навыки и желаемый опыт в <a class="linkbtn" href="/pages/account.html#profile">профиле</a> — мы покажем процент совпадения и подберём лучшие вакансии.</div>' : '';
+          list.innerHTML = hint + (vs.length ? vs.map(v => vacancyCard(v, !me || isStudent)).join('')
             : '<p class="empty">Ничего не найдено. Попробуйте изменить фильтры</p>');
           return;
         }
         const offers = mode === 'offers';
         const rows = (await api('/api/applications')).filter(a => a.direction === (offers ? 'company_to_student' : 'student_to_company'));
-        list.innerHTML = rows.length ? rows.map(a => card(`<div><small>${esc(a.company)} · ${when(a.created_at)}</small><h3>${esc(a.title)}</h3>${offers ? '' : stepper(a) + ivBlock(a)}${a.cover_letter ? '<details class="cl"><summary>Ваше письмо</summary><p>' + esc(a.cover_letter) + '</p></details>' : ''}</div>` +
+        if (currentRequest !== requestId) return;
+        list.setAttribute('aria-busy', 'false');
+        list.innerHTML = rows.length ? rows.map(a => card(`<div><small>${companyLink(a)} · ${when(a.created_at)}</small><h3><a class="entity-link" href="${vacancyUrl(a.vacancy_id)}">${esc(a.title)}</a></h3>${offers ? '' : stepper(a) + ivBlock(a)}${a.cover_letter ? '<details class="cl"><summary>Ваше письмо</summary><p>' + esc(a.cover_letter) + '</p></details>' : ''}</div>` +
           (offers && a.status === 'new' ? `<div class="acts"><button class="btn primary sm" data-do="accepted" data-id="${a.id}">Принять</button><button class="btn sm" data-do="declined" data-id="${a.id}">Отклонить</button></div>`
             : `<div class="acts"><span class="tag">${ST[a.status] || a.status}</span>${a.chat ? `<a class="btn primary sm" href="/pages/chat.html#${a.id}">Чат</a>` : ''}${!offers && a.status === 'new' ? `<button class="btn sm" data-do="withdraw" data-id="${a.id}">Отозвать</button>` : ''}</div>`))).join('')
           : `<p class="empty">${offers ? 'Пока нет предложений от партнёров. Заполните профиль — компании увидят его.' : 'Вы ещё никуда не откликались'}</p>`;
       }
-      tabs.forEach(t => t.onclick = () => location.hash = t.dataset.mode);
-      addEventListener('hashchange', () => { mode = hashIn(modes); render().catch(fail); });
-      $$('.chip').forEach(c => c.onclick = () => { c.classList.toggle('on'); render().catch(fail); });
-      $('#filters').addEventListener('input', () => { clearTimeout(dt); dt = setTimeout(() => render().catch(fail), 280); });
+      function showError(err) {
+        list.setAttribute('aria-busy', 'false');
+        list.innerHTML = `<div class="empty"><p>${esc(err.message || 'Не удалось загрузить вакансии')}</p><button class="btn sm" id="retry-catalog">Повторить загрузку</button></div>`;
+        $('#retry-catalog').onclick = () => render().catch(showError);
+      }
+      tabs.forEach(t => t.onclick = () => { if (!isStudent && t.dataset.mode !== 'vacancies') return authGate(); location.hash = t.dataset.mode; });
+      addEventListener('hashchange', () => { mode = isStudent ? hashIn(modes) : 'vacancies'; render().catch(showError); });
+      $$('.chip').forEach(c => c.onclick = () => { if (c.id === 'f-fav' && !isStudent) return authGate(); c.classList.toggle('on'); render().catch(showError); });
+      $('#filters').addEventListener('input', () => { clearTimeout(dt); dt = setTimeout(() => render().catch(showError), 280); });
       list.addEventListener('click', async e => {
         const iv = e.target.closest('button[data-ivdo]');
         if (iv) { try { await api(`/api/interviews/${iv.dataset.id}/respond`, { method: 'POST', body: { status: iv.dataset.ivdo } }); toast('Ответ отправлен ✓'); render(); } catch (err) { fail(err); } return; }
         const b = e.target.closest('button[data-do]'); if (!b) return;
+        if (!me) return authGate(b.dataset.id, b.dataset.do);
+        if (!isStudent) return toast('Откликаться могут только студенты');
         const act = b.dataset.do;
         try {
-          if (act === 'fav') await api('/api/favorites/' + b.dataset.id, { method: 'POST' });
+          if (act === 'fav') { b.disabled = true; await api('/api/favorites/' + b.dataset.id, { method: 'POST' }); }
           else if (act === 'apply') { openApply(b.dataset.id, b.dataset.title, () => { toast('Отклик отправлен ✓'); render(); }); return; }
           else if (act === 'withdraw') { await api('/api/applications/' + b.dataset.id, { method: 'DELETE' }); toast('Отклик отозван'); }
           else { await api(`/api/applications/${b.dataset.id}/respond`, { method: 'POST', body: { status: act } }); if (act === 'accepted') boom(e); toast('Готово ✓'); }
           render();
-        } catch (err) { fail(err); if (err.message.includes('профиль')) setTimeout(() => location.href = '/pages/account.html#profile', 1400); }
+        } catch (err) { b.disabled = false; fail(err); if (err.message.includes('профиль')) setTimeout(() => location.href = '/pages/account.html#profile', 1400); }
       });
-      render().catch(fail);
+      addEventListener('pageshow', e => { if (e.persisted) render().catch(showError); });
+      render().catch(showError);
     }
 
     // ---- чат по откликам ----
@@ -416,7 +608,7 @@
         cur = Number(location.hash.slice(1)) || null; box.classList.toggle('open', !!cur); form.hidden = !cur;
         if (!cur) { pane = null; msgs.innerHTML = '<p class="empty">Выберите диалог слева</p>'; $('#cname2').textContent = 'Выберите чат'; $('#ctitle').textContent = ''; return loadList(); }
         pane = mkPane(msgs, `/api/chats/${cur}/messages`, '<p class="empty">Сообщений пока нет — поприветствуйте собеседника</p>');
-        try { const d = await pane(true); $('#cname2').textContent = role() === 'company' ? d.student : d.company; $('#ctitle').textContent = d.title; }
+        try { const d = await pane(true); $('#cname2').innerHTML = role() === 'company' ? `<a class="entity-link" href="${studentUrl(d.student_id)}">${esc(d.student)}</a>` : d.company_id ? `<a class="entity-link" href="${companyUrl(d.company_id)}">${esc(d.company)}</a>` : esc(d.company); $('#ctitle').textContent = d.title; }
         catch (e) { fail(e); location.hash = ''; return; }
         loadList();
       }
@@ -464,7 +656,7 @@
       const IVS = { proposed: 'ждёт подтверждения', confirmed: 'подтверждено', reschedule: 'просит перенести' };
       let funnel = [], lastSig = '';
       const kcard = a => `<div class="kcard" data-id="${a.id}" ${me.approved ? 'draggable="true"' : ''}>
-        <b>${esc(a.full_name || 'Студент')}</b><small>«${esc(a.title)}» · ${ago(a.created_at)}</small>
+        <b><a class="entity-link" href="${studentUrl(a.user_id)}">${esc(a.full_name || 'Студент')}</a></b><small>«${esc(a.title)}» · ${ago(a.created_at)}</small>
         <p class="kmeta">${[a.age && a.age + ' лет', a.university, a.specialty].filter(Boolean).map(esc).join(' · ')}${a.skills ? '<br>' + esc(a.skills) : ''}</p>
         ${a.interview ? `<div class="kiv"><b>${when(a.interview.scheduled_at)}</b> · ${a.interview.format === 'office' ? 'в офисе' : 'онлайн'}<br><small>${IVS[a.interview.status] || ''}${a.interview.place ? ' · ' : ''}${placeHtml(a.interview.place)}</small></div>` : ''}
         ${a.cover_letter ? `<details class="cl"><summary>Письмо</summary><p>${esc(a.cover_letter)}</p></details>` : ''}
@@ -480,7 +672,7 @@
           return `<div class="kcol" data-col="${k}"><div class="khead"><b>${l}</b><span>${items.length}</span></div>${items.map(kcard).join('') || '<p class="kempty">Пусто</p>'}</div>`;
         }).join('');
         const inv = rs.filter(a => a.direction === 'company_to_student');
-        $('#resp').innerHTML = inv.length ? inv.map(a => card(`<div><small>Ваше приглашение · «${esc(a.title)}» · ${when(a.created_at)}</small><h3>${esc(a.full_name || 'Студент')}</h3></div>
+        $('#resp').innerHTML = inv.length ? inv.map(a => card(`<div><small>Ваше приглашение · «${esc(a.title)}» · ${when(a.created_at)}</small><h3><a class="entity-link" href="${studentUrl(a.user_id)}">${esc(a.full_name || 'Студент')}</a></h3></div>
           <div class="acts"><span class="tag">${a.status === 'new' ? 'Ждём ответа' : ST[a.status] || a.status}</span>${a.status === 'accepted' ? `<a class="btn sm" href="/pages/resume.html#${a.user_id}" target="_blank">Резюме</a><a class="btn sm" href="/pages/chat.html#${a.id}">Написать</a>` : ''}</div>`)).join('')
           : '<p class="empty">Приглашений пока нет — найдите студентов во вкладке «Студенты».</p>';
       }
@@ -522,14 +714,14 @@
         $('#s-v').textContent = vs.filter(v => v.is_active).length;
         $('#s-r').textContent = rs.filter(a => a.direction === 'student_to_company').length;
         $('#s-i').textContent = rs.filter(a => a.direction === 'company_to_student').length;
-        $('#vlist').innerHTML = vs.length ? vs.map(v => card(`<div><small>${v.is_active ? 'Активна' : 'Закрыта'} · ${when(v.created_at)}</small><h3>${esc(v.title)}</h3><div class="tags">${tagsOf(v)}</div><p>${esc(v.description)}</p></div>
-          <div class="acts"><span class="tag">Откликов: ${v.responses}</span><button class="btn sm" data-vdo="toggle" data-id="${v.id}">${v.is_active ? 'Закрыть' : 'Открыть'}</button><button class="btn sm" data-vdo="del" data-id="${v.id}">Удалить</button></div>`)).join('') : '<p class="empty">Вы ещё не публиковали вакансии</p>';
+        $('#vlist').classList.add('vacancy-grid');
+        $('#vlist').innerHTML = vs.length ? vs.map(v => vacancyCard(v, false, true)).join('') : '<p class="empty">Вы ещё не публиковали вакансии</p>';
         renderFunnel(rs);
         const sel = $('#inv-vac'), cur = sel.value, act = vs.filter(v => v.is_active);
         sel.innerHTML = act.length ? act.map(v => `<option value="${v.id}">${esc(v.title)}</option>`).join('') : '<option value="">Сначала опубликуйте вакансию</option>';
         if (cur) sel.value = cur;
-        $('#studs').innerHTML = st.length ? st.map(s => card(`<div><h3>${esc(s.full_name)}</h3><p>${[s.age && s.age + ' лет', s.city, s.education, s.university, s.specialty].filter(Boolean).map(esc).join(' · ')}${s.skills ? '<br>Навыки: ' + esc(s.skills) : ''}${s.desired_experience ? '<br>Хочет опыт: ' + esc(s.desired_experience) : ''}</p></div>
-          <button class="btn primary sm" data-uid="${s.user_id}">Пригласить</button>`)).join('') : '<p class="empty">Студенты с заполненными профилями пока не появились</p>';
+        $('#studs').innerHTML = st.length ? st.map(s => card(`<div><h3><a class="entity-link" href="${studentUrl(s.user_id)}">${esc(s.full_name)}</a></h3><p>${[s.age && s.age + ' лет', s.city, s.education, s.university, s.specialty].filter(Boolean).map(esc).join(' · ')}${s.skills ? '<br>Навыки: ' + esc(s.skills) : ''}${s.desired_experience ? '<br>Хочет опыт: ' + esc(s.desired_experience) : ''}</p></div>
+          <div class="acts"><a class="btn sm" href="${studentUrl(s.user_id)}">Профиль</a><button class="btn primary sm" data-uid="${s.user_id}">Пригласить</button></div>`)).join('') : '<p class="empty">Студенты с заполненными профилями пока не появились</p>';
       }
       vf2.addEventListener('submit', async e => {
         e.preventDefault(); const b = Object.fromEntries(new FormData(vf2)); b.paid = !!b.paid;

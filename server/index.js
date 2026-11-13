@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const path = require('path');
+const fs = require('fs');
 const { query, one, init } = require('./database');
 const { sendMail } = require('./mailer');
 const { prepare, score } = require('./match');
@@ -9,11 +10,58 @@ const { prepare, score } = require('./match');
 const app = express();
 const PUBLIC = path.join(__dirname, '..', 'public');
 app.use(express.json({ limit: '100kb' }));
-app.use(express.static(PUBLIC));
-app.get('/', (_, res) => res.sendFile(path.join(PUBLIC, 'pages', 'index.html')));
-app.get('/pages/:name', (req, res) => res.sendFile(path.join(PUBLIC, 'pages', path.basename(req.params.name))));
 
 const h = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+// ================= SEO, заголовки, кэш =================
+const SITE = (process.env.SITE_URL || 'https://project.wn-7.ru').replace(/\/+$/, '');
+const PUBLIC_PAGES = new Set(['index.html', 'partners.html', 'vacancies.html', 'help.html', 'vacancy.html', 'company-profile.html']); // всё остальное закрыто от индексации
+app.disable('x-powered-by');
+let compression = null;
+try { compression = require('compression'); } catch { console.warn('Пакет compression не установлен — выполните npm install'); }
+if (compression) app.use(compression());
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+app.use('/api', (req, res, next) => { res.setHeader('X-Robots-Tag', 'noindex'); next(); });
+
+let statsCache = { at: 0, v: null };
+const stats = async () => {
+  if (!statsCache.v || Date.now() - statsCache.at > 60000) statsCache = { at: Date.now(), v: await one(`SELECT
+    (SELECT COUNT(*)::int FROM users WHERE role = 'student') AS students, (SELECT COUNT(*)::int FROM companies c JOIN users u ON u.id = c.user_id WHERE c.approved AND NOT COALESCE(u.is_blocked, false) AND u.role = 'company') AS companies,
+    (SELECT COUNT(*)::int FROM vacancies WHERE is_active) AS vacancies, (SELECT COUNT(*)::int FROM applications) AS applications`) };
+  return statsCache.v;
+};
+// страница с подстановкой адреса сайта; на главной — реальные цифры прямо в HTML (их видят и роботы)
+const render = async name => {
+  let html = fs.readFileSync(path.join(PUBLIC, 'pages', name), 'utf8').replace(/\{\{SITE_URL\}\}/g, SITE);
+  if (name === 'index.html') {
+    let st = null; try { st = await stats(); } catch {}
+    if (st) for (const [k, v] of Object.entries(st)) html = html.replace(new RegExp(`(id="n-${k}" data-count=")0(">)0(<)`), `$1${v}$2${v}$3`);
+  }
+  return html;
+};
+app.get('/pages/index.html', (req, res) => res.redirect(301, '/'));
+app.get('/robots.txt', (req, res) => res.type('text/plain').send(`User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: ${SITE}/sitemap.xml\n`));
+app.get('/sitemap.xml', (req, res) => {
+  const urls = [['/', 'index.html'], ['/pages/partners.html', 'partners.html'], ['/pages/vacancies.html', 'vacancies.html'], ['/pages/help.html', 'help.html']];
+  res.type('application/xml').send(`<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    urls.map(([u, f]) => `  <url><loc>${SITE}${u}</loc><lastmod>${fs.statSync(path.join(PUBLIC, 'pages', f)).mtime.toISOString().slice(0, 10)}</lastmod></url>`).join('\n') + '\n</urlset>\n');
+});
+app.get(['/', '/pages/:name'], h(async (req, res, next) => {
+  const name = req.params.name ? path.basename(req.params.name) : 'index.html';
+  if (!name.endsWith('.html') || !fs.existsSync(path.join(PUBLIC, 'pages', name))) return next();
+  if (!PUBLIC_PAGES.has(name)) res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.type('html').send(await render(name));
+}));
+app.use(express.static(PUBLIC, { setHeaders: (res, p) => {
+  if (/\.(css|js)$/.test(p)) res.setHeader('Cache-Control', 'public, max-age=300');
+  else if (/\.(png|jpe?g|svg|ico|webp|woff2?)$/.test(p)) res.setHeader('Cache-Control', 'public, max-age=86400');
+} }));
 const num = v => Number(v) || 0;
 const clean = (v, max = 500) => { const t = String(v ?? '').trim().slice(0, max); return t === '' ? null : t; };
 const notify = (uid, text, link) => query('INSERT INTO notifications (user_id, text, link) VALUES ($1,$2,$3)', [uid, text, link || null]);
@@ -68,9 +116,67 @@ const approved = (req, res, next) => req.approved ? next() : res.status(403).jso
 const student = [auth, need('student')], company = [auth, need('company')], admin = [auth, need('admin')];
 
 // ---------- публичное ----------
-app.get('/api/public/stats', h(async (req, res) => res.json(await one(`SELECT
-  (SELECT COUNT(*)::int FROM users WHERE role = 'student') AS students, (SELECT COUNT(*)::int FROM users WHERE role = 'company') AS companies,
-  (SELECT COUNT(*)::int FROM vacancies WHERE is_active) AS vacancies, (SELECT COUNT(*)::int FROM applications) AS applications`))));
+app.get('/api/public/stats', h(async (req, res) => res.json(await stats())));
+
+// Публичный каталог: только опубликованные вакансии, без персональных данных.
+app.get('/api/public/vacancies', h(async (req, res) => {
+  const w = ['v.is_active'], p = [];
+  const { q: text, format, category, paid } = req.query;
+  if (text) {
+    p.push('%' + String(text).toLowerCase().slice(0, 60) + '%');
+    w.push(`(lower(v.title) LIKE $${p.length} OR lower(v.company) LIKE $${p.length} OR lower(COALESCE(v.description,'')) LIKE $${p.length} OR lower(COALESCE(v.city,'')) LIKE $${p.length})`);
+  }
+  if (format) { p.push(String(format)); w.push(`v.format = $${p.length}`); }
+  if (category) { p.push(String(category)); w.push(`v.category = $${p.length}`); }
+  if (paid === '1') w.push('v.paid');
+  const rows = await query(`SELECT v.id, v.company_id, v.company, v.title, v.description, v.city,
+    v.format, v.category, v.paid, v.created_at FROM vacancies v
+    WHERE ${w.join(' AND ')} ORDER BY v.id DESC LIMIT 100`, p);
+  res.json(rows);
+}));
+
+// Отдельная публичная вакансия: только активная, без данных откликнувшихся.
+app.get('/api/public/vacancies/:id', h(async (req, res) => {
+  const id = num(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Некорректный номер вакансии' });
+  const v = await one(`SELECT id, company_id, company, title, description, city, format, category, paid, is_active, created_at
+    FROM vacancies WHERE id = $1 AND is_active`, [id]);
+  v ? res.json(v) : res.status(404).json({ error: 'Вакансия не найдена или закрыта' });
+}));
+
+// Партнёры на главной: только публичные компании и агрегаты, без данных студентов.
+app.get('/api/public/companies', h(async (req, res) => {
+  const offset = req.query.offset == null ? 0 : Number(req.query.offset);
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000) return res.status(400).json({ error: 'Некорректная страница списка' });
+  const rows = await query(`WITH vacancy_totals AS (
+      SELECT company_id, COUNT(*) FILTER (WHERE is_active)::int AS active_vacancies
+      FROM vacancies WHERE company_id IS NOT NULL GROUP BY company_id
+    ), response_totals AS (
+      SELECT v.company_id, COUNT(*)::int AS responses
+      FROM applications a JOIN vacancies v ON v.id = a.vacancy_id
+      WHERE a.direction = 'student_to_company' GROUP BY v.company_id
+    )
+    SELECT c.user_id, c.name, c.industry, c.city,
+      COALESCE(r.responses, 0)::int AS responses, COALESCE(v.active_vacancies, 0)::int AS active_vacancies
+    FROM companies c JOIN users u ON u.id = c.user_id
+    LEFT JOIN response_totals r ON r.company_id = c.user_id LEFT JOIN vacancy_totals v ON v.company_id = c.user_id
+    WHERE c.approved AND NOT COALESCE(u.is_blocked, false) AND u.role = 'company'
+    ORDER BY lower(c.name), c.user_id LIMIT 7 OFFSET $1`, [offset]);
+  res.json({ items: rows.slice(0, 6), nextOffset: rows.length > 6 ? offset + 6 : null });
+}));
+
+// Профиль компании публичный только после проверки; контакты аккаунта не выдаются.
+app.get('/api/public/companies/:id', h(async (req, res) => {
+  const id = num(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Некорректный номер компании' });
+  const c = await one(`SELECT c.user_id, c.name, c.industry, c.city, c.website, c.description
+    FROM companies c JOIN users u ON u.id = c.user_id
+    WHERE c.user_id = $1 AND c.approved AND NOT u.is_blocked`, [id]);
+  if (!c) return res.status(404).json({ error: 'Профиль компании не найден или ещё не опубликован' });
+  const vacancies = await query(`SELECT id, company_id, company, title, description, city, format, category, paid, is_active, created_at
+    FROM vacancies WHERE company_id = $1 AND is_active ORDER BY id DESC LIMIT 100`, [id]);
+  res.json({ company: c, vacancies });
+}));
 
 // ---------- аккаунты ----------
 app.post('/api/register', h(async (req, res) => {
@@ -102,7 +208,7 @@ app.post('/api/login', h(async (req, res) => {
   res.json({ token: await makeSession(u.id), role: u.role, verified: u.email_verified || u.role === 'admin' });
 }));
 app.post('/api/logout', auth, h(async (req, res) => { await query('DELETE FROM sessions WHERE token = $1', [req.token]); res.json({ ok: true }); }));
-app.get('/api/me', auth, h(async (req, res) => res.json({ role: req.role, verified: req.verified, approved: req.approved, email: (await one('SELECT email FROM users WHERE id = $1', [req.uid])).email })));
+app.get('/api/me', auth, h(async (req, res) => res.json({ id: req.uid, role: req.role, verified: req.verified, approved: req.approved, email: (await one('SELECT email FROM users WHERE id = $1', [req.uid])).email })));
 
 app.post('/api/verify/send', auth, h(async (req, res) => {
   if (req.verified) return res.json({ ok: true, verified: true });
@@ -183,6 +289,21 @@ app.get('/api/vacancies', ...student, h(async (req, res) => {
   if (req.query.sort === 'match') rows.sort((a, b) => (b.match ?? -1) - (a.match ?? -1) || b.id - a.id);
   res.json(rows);
 }));
+// Владелец, администратор и откликнувшийся студент могут открыть архивную вакансию.
+app.get('/api/vacancies/:id', auth, h(async (req, res) => {
+  const id = num(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Некорректный номер вакансии' });
+  const v = await one('SELECT * FROM vacancies WHERE id = $1', [id]);
+  if (!v) return res.status(404).json({ error: 'Вакансия не найдена' });
+  const application = req.role === 'student' ? await one(`SELECT id, status, direction FROM applications
+    WHERE vacancy_id = $1 AND user_id = $2 ORDER BY (direction = 'student_to_company') DESC, id DESC LIMIT 1`, [id, req.uid]) : null;
+  if (!v.is_active && req.role !== 'admin' && v.company_id !== req.uid && !application)
+    return res.status(404).json({ error: 'Вакансия не найдена или закрыта' });
+  const fav = req.role === 'student' && !!(await one('SELECT 1 FROM favorites WHERE user_id = $1 AND vacancy_id = $2', [req.uid, id]));
+  if (req.role === 'student') Object.assign(v, score(prepare(await one('SELECT * FROM profiles WHERE user_id = $1', [req.uid])), v));
+  res.json({ ...v, fav, applied: application?.direction === 'student_to_company', application });
+}));
+
 app.post('/api/favorites/:id', ...student, h(async (req, res) => {
   const vid = num(req.params.id);
   const del = await query('DELETE FROM favorites WHERE user_id = $1 AND vacancy_id = $2 RETURNING 1', [req.uid, vid]);
@@ -200,7 +321,7 @@ app.post('/api/apply/:id', ...student, verified, h(async (req, res) => {
   if (v.company_id) await notify(v.company_id, `${await nameOf(req.uid)} откликнулся(ась) на «${v.title}»`, '/pages/company.html#responses');
   res.json({ ok: true });
 }));
-app.get('/api/applications', ...student, h(async (req, res) => res.json(await query(`SELECT a.id, a.direction, a.status, a.created_at, a.cover_letter, v.company, v.title,
+app.get('/api/applications', ...student, h(async (req, res) => res.json(await query(`SELECT a.id, a.direction, a.status, a.created_at, a.cover_letter, v.company, v.company_id, v.id AS vacancy_id, v.title,
   (SELECT row_to_json(i) FROM (SELECT id, scheduled_at, format, place, note, status FROM interviews WHERE application_id = a.id ORDER BY id DESC LIMIT 1) i) AS interview,
   (v.company_id IS NOT NULL AND a.status <> 'declined' AND (a.direction = 'student_to_company' OR a.status = 'accepted')) AS chat
   FROM applications a JOIN vacancies v ON v.id = a.vacancy_id WHERE a.user_id = $1 ORDER BY a.id DESC`, [req.uid]))));
@@ -248,7 +369,7 @@ app.delete('/api/company/vacancies/:id', ...company, approved, h(async (req, res
   const r = await query('DELETE FROM vacancies WHERE id = $1 AND company_id = $2 RETURNING id', [num(req.params.id), req.uid]);
   r.length ? res.json({ ok: true }) : res.status(404).json({ error: 'Вакансия не найдена' });
 }));
-app.get('/api/company/responses', ...company, h(async (req, res) => res.json(await query(`SELECT a.id, a.user_id, a.cover_letter, a.direction, a.status, a.created_at, v.title,
+app.get('/api/company/responses', ...company, h(async (req, res) => res.json(await query(`SELECT a.id, a.user_id, a.cover_letter, a.direction, a.status, a.created_at, v.id AS vacancy_id, v.title,
   (SELECT row_to_json(i) FROM (SELECT id, scheduled_at, format, place, note, status FROM interviews WHERE application_id = a.id ORDER BY id DESC LIMIT 1) i) AS interview,
   p.full_name, p.age, p.education, p.university, p.specialty, p.work_history, p.desired_experience, p.skills, u.email
   FROM applications a JOIN vacancies v ON v.id = a.vacancy_id JOIN users u ON u.id = a.user_id LEFT JOIN profiles p ON p.user_id = a.user_id
@@ -306,6 +427,22 @@ app.post('/api/invite', ...company, approved, verified, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Анкеты студентов не публичны. Компания должна быть одобрена; email здесь не раскрывается.
+app.get('/api/students/:id', auth, h(async (req, res) => {
+  const id = req.params.id === 'me' ? req.uid : num(req.params.id);
+  if (!Number.isSafeInteger(id) || id < 1) return res.status(400).json({ error: 'Некорректный номер студента' });
+  if (req.role === 'student' && id !== req.uid) return res.status(403).json({ error: 'Другие анкеты доступны только проверенным компаниям' });
+  if (req.role === 'company' && !req.approved) return res.status(403).json({ error: 'Просмотр анкет доступен после проверки компании', code: 'unapproved' });
+  const p = await one(`SELECT p.user_id, p.full_name, p.age, p.education, p.university, p.specialty,
+    p.work_history, p.desired_experience, p.city, p.skills, p.about, p.portfolio
+    FROM profiles p JOIN users u ON u.id = p.user_id
+    WHERE p.user_id = $1 AND u.role = 'student' AND NOT u.is_blocked AND p.full_name IS NOT NULL`, [id]);
+  if (!p) return res.status(404).json({ error: 'Профиль студента не найден или ещё не заполнен' });
+  const canResume = req.role === 'admin' || (req.role === 'student' && id === req.uid) || !!(await one(`SELECT 1 FROM applications a JOIN vacancies v ON v.id = a.vacancy_id
+    WHERE a.user_id = $1 AND v.company_id = $2 AND ((a.direction = 'student_to_company' AND a.status <> 'declined') OR (a.direction = 'company_to_student' AND a.status = 'accepted')) LIMIT 1`, [id, req.uid]));
+  res.json({ ...p, can_resume: canResume });
+}));
+
 // ---------- резюме ----------
 // студент видит своё; компания — только резюме тех, кто откликнулся (или принял приглашение); админ — любое
 app.get('/api/resume/:id', auth, h(async (req, res) => {
@@ -327,7 +464,7 @@ app.get('/api/dashboard', auth, h(async (req, res) => {
   if (req.role === 'student') {
     const p = await one('SELECT * FROM profiles WHERE user_id = $1', [uid]);
     const filled = SF.filter(k => p && p[k] != null && String(p[k]).trim() !== '').length;
-    const apps = await query(`SELECT a.direction, a.status, a.created_at, v.title, v.company FROM applications a JOIN vacancies v ON v.id = a.vacancy_id WHERE a.user_id = $1 ORDER BY a.id DESC`, [uid]);
+    const apps = await query(`SELECT a.direction, a.status, a.created_at, v.id AS vacancy_id, v.title, v.company, v.company_id FROM applications a JOIN vacancies v ON v.id = a.vacancy_id WHERE a.user_id = $1 ORDER BY a.id DESC`, [uid]);
     const prep = prepare(p);
     const open = await query(`SELECT v.id, v.title, v.company, v.city, v.format, v.category, v.description FROM vacancies v
       WHERE v.is_active AND NOT EXISTS (SELECT 1 FROM applications a WHERE a.vacancy_id = v.id AND a.user_id = $1) ORDER BY v.id DESC LIMIT 100`, [uid]);
@@ -340,7 +477,7 @@ app.get('/api/dashboard', auth, h(async (req, res) => {
       recent: apps.slice(0, 5), picks });
   }
   if (req.role === 'company') {
-    const vac = await query(`SELECT v.title, v.is_active, (SELECT COUNT(*)::int FROM applications a WHERE a.vacancy_id = v.id AND a.direction = 'student_to_company') AS responses FROM vacancies v WHERE v.company_id = $1`, [uid]);
+    const vac = await query(`SELECT v.id, v.title, v.is_active, (SELECT COUNT(*)::int FROM applications a WHERE a.vacancy_id = v.id AND a.direction = 'student_to_company') AS responses FROM vacancies v WHERE v.company_id = $1`, [uid]);
     const apps = await query(`SELECT a.direction, a.status FROM applications a JOIN vacancies v ON v.id = a.vacancy_id WHERE v.company_id = $1`, [uid]);
     return res.json({ kind: 'company', name: (await one('SELECT name FROM companies WHERE user_id = $1', [uid]))?.name,
       stats: { vacancies: vac.filter(v => v.is_active).length, responses: apps.filter(a => a.direction === 'student_to_company').length,
@@ -364,7 +501,7 @@ const chatApp = async (req, res) => {
   return a;
 };
 app.get('/api/chats', auth, h(async (req, res) => res.json(await query(`SELECT * FROM (
-  SELECT a.id, a.created_at, v.title, v.company, p.full_name,
+  SELECT a.id, a.user_id, a.created_at, v.id AS vacancy_id, v.title, v.company, v.company_id, p.full_name,
     (SELECT text FROM messages m WHERE m.application_id = a.id ORDER BY m.id DESC LIMIT 1) AS last_text,
     (SELECT created_at FROM messages m WHERE m.application_id = a.id ORDER BY m.id DESC LIMIT 1) AS last_at
   FROM applications a JOIN vacancies v ON v.id = a.vacancy_id LEFT JOIN profiles p ON p.user_id = a.user_id
@@ -374,7 +511,7 @@ app.get('/api/chats', auth, h(async (req, res) => res.json(await query(`SELECT *
 app.get('/api/chats/:id/messages', auth, h(async (req, res) => {
   const a = await chatApp(req, res); if (!a) return;
   const rows = await query('SELECT id, sender_id, text, created_at FROM messages WHERE application_id = $1 AND id > $2 ORDER BY id', [a.id, num(req.query.after)]);
-  res.json({ title: a.title, company: a.company, student: await nameOf(a.user_id), items: rows.map(m => ({ id: m.id, text: m.text, created_at: m.created_at, mine: m.sender_id === req.uid })) });
+  res.json({ title: a.title, company: a.company, company_id: a.company_id, student_id: a.user_id, student: await nameOf(a.user_id), items: rows.map(m => ({ id: m.id, text: m.text, created_at: m.created_at, mine: m.sender_id === req.uid })) });
 }));
 app.post('/api/chats/:id/messages', auth, approved, verified, h(async (req, res) => {
   const a = await chatApp(req, res); if (!a) return;
@@ -475,6 +612,11 @@ app.post('/api/admin/support/:id/status', ...admin, h(async (req, res) => {
   res.json({ ok: true });
 }));
 
+app.use((req, res) => { // страница не найдена
+  if (req.path.startsWith('/api/')) return res.status(404).json({});
+  res.status(404); res.setHeader('X-Robots-Tag', 'noindex');
+  res.sendFile(path.join(PUBLIC, 'pages', '404.html'));
+});
 app.use((err, req, res, next) => { console.error(err); res.status(500).json({ error: 'Ошибка сервера' }); });
 
 async function ensureAdmin() {
@@ -487,7 +629,8 @@ async function ensureAdmin() {
 }
 
 const PORT = process.env.PORT || 3000;
-init().then(ensureAdmin).then(() => {
+module.exports = app;
+if (require.main === module) init().then(ensureAdmin).then(() => {
   const server = app.listen(PORT);
   server.on('listening', () => console.log(`Сервер запущен: http://localhost:${PORT} (PostgreSQL: ${process.env.PGDATABASE})`));
   server.on('error', e => {
