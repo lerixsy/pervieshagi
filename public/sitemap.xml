@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+   <!-- Главная страница -->
+   <url>
+      <loc>https://project.wn-7.ru/</loc>
+      <lastmod>2026-11-15</lastmod>
+      <changefreq>weekly</changefreq>
+      <priority>1.0</priority>
+   </url>
+   <!-- Страница регистрации -->
+   <url>
+      <loc>https://project.wn-7.ru/pages/register.html</loc>
+      <lastmod>2026-11-15</lastmod>
+      <changefreq>monthly</changefreq>
+      <priority>0.8</priority>
+   </url>
+   <!-- Страница входа -->
+   <url>
+      <loc>https://project.wn-7.ru/pages/login.html</loc>
+      <lastmod>2026-11-15</lastmod>
+      <changefreq>monthly</changefreq>
+      <priority>0.7</priority>
+   </url>
+   <!-- Личный профиль (обычно не индексируется, но включён по запросу) -->
+   <url>
+      <loc>https://project.wn-7.ru/pages/profile.html</loc>
+      <lastmod>2026-11-15</lastmod>
+      <changefreq>monthly</changefreq>
+      <priority>0.5</priority>
+   </url>
+   <!-- Вакансии -->
+   <url>
+      <loc>https://project.wn-7.ru/pages/vacancies.html</loc>
+      <lastmod>2026-11-15</lastmod>
+      <changefreq>weekly</changefreq>
+      <priority>0.9</priority>
+   </url>
+   <!-- Компании -->
+   <url>
+      <loc>https://project.wn-7.ru/pages/companies.html</loc>
+      <lastmod>2026-11-15</lastmod>
+      <changefreq>weekly</changefreq>
+      <priority>0.9</priority>
+   </url>
+   <!-- О проекте -->
+   <url>
+      <loc>https://project.wn-7.ru/pages/about.html</loc>
+      <lastmod>2026-11-15</lastmod>
+      <changefreq>monthly</changefreq>
+      <priority>0.7</priority>
+   </url>
+   <!-- FAQ -->
+   <url>
+      <loc>https://project.wn-7.ru/pages/faq.html</loc>
+      <lastmod>2026-11-15</lastmod>
+      <changefreq>monthly</changefreq>
+      <priority>0.7</priority>
+   </url>
+</urlset>
