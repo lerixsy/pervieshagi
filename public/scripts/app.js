@@ -40,7 +40,7 @@
   let tt;
   function toast(msg) {
     let t = $('.toast'); if (!t) { t = document.createElement('div'); t.className = 'toast'; document.body.appendChild(t); }
-    t.textContent = msg; requestAnimationFrame(() => t.classList.add('show'));
+    t.classList.remove('profile-hint'); t.textContent = msg; requestAnimationFrame(() => t.classList.add('show'));
     clearTimeout(tt); tt = setTimeout(() => t.classList.remove('show'), 3200);
   }
   const fail = e => { toast(e.message); if (e.code === 'unverified' || e.code === 'unapproved') setTimeout(() => location.href = e.code === 'unverified' ? '/pages/verify.html' : '/pages/support.html', 1500); };
@@ -192,6 +192,7 @@
     const allowedReturn = value => {
       if (typeof value !== 'string') return null;
       if (/^\/pages\/(vacancies|support)\.html(?:#[a-z0-9_-]+)?$/i.test(value)) return value;
+      if (/^\/pages\/account\.html(?:\?hint=profile(?:&field=(?:age|education|university|specialty|work_history|desired_experience))?)?#(?:profile|security)$/i.test(value)) return value;
       return /^\/pages\/(vacancy|company-profile|student-profile)\.html\?id=(?:[1-9]\d*|me)$/i.test(value) ? value : null;
     };
     const queryReturn = allowedReturn(new URLSearchParams(location.search).get('next'));
@@ -204,6 +205,13 @@
     if (['login', 'register', 'forgot'].includes(page) && me) return location.href = afterAuth();
     if (page === 'profile') return location.href = '/pages/account.html#profile';
     const flash = sessionStorage.getItem('flash'); if (flash) { sessionStorage.removeItem('flash'); toast(flash); }
+    const profileHint = page === 'account' && new URLSearchParams(location.search).get('hint') === 'profile';
+    const profileHintField = new URLSearchParams(location.search).get('field');
+    if (profileHint) {
+      history.replaceState(null, '', location.pathname + (location.hash || '#profile'));
+      toast('Добавьте данные в профиле.');
+      $('.toast')?.classList.add('profile-hint');
+    }
 
     // ---- шапка, нижняя панель, баннер ----
     const ab = $('#auth-btn'), reg = $('#reg-btn'), links = $('.links');
@@ -220,12 +228,10 @@
         const mi = (h, i, t) => `<a href="${h}">${icon(i)}<span>${t}</span></a>`;
         um.innerHTML = `<button class="uavatar" aria-label="Меню профиля">${esc(me.email[0].toUpperCase())}</button>
           <div class="udrop"><div class="uhead"><b>${lab}</b><small>${esc(me.email)}</small></div>
-          ${mi('/', 'home', 'На главную')}${me.role === 'admin' ? '' : mi(accLink, 'user', me.role === 'company' ? 'Профиль компании' : 'Мой профиль')}${me.id && me.role !== 'admin' ? mi(me.role === 'company' ? companyUrl(me.id) : studentUrl(me.id), 'user', 'Посмотреть профиль') : ''}${mi('/pages/account.html#security', 'lock', 'Безопасность')}${me.role === 'admin' ? '' : mi('/pages/support.html', 'help', 'Поддержка')}<button class="ul" id="open-set">${icon('sliders')}<span>Оформление и тема</span></button><hr>
+          ${mi('/', 'home', 'На главную')}${me.role === 'admin' ? '' : mi(accLink, 'user', me.role === 'company' ? 'Профиль компании' : 'Мой профиль')}${me.id && me.role !== 'admin' ? mi(me.role === 'company' ? companyUrl(me.id) : studentUrl(me.id), 'user', 'Посмотреть профиль') : ''}${mi('/pages/account.html#security', 'lock', 'Безопасность')}${me.role === 'admin' ? '' : mi('/pages/support.html', 'help', 'Поддержка')}<hr>
           <button class="ul" id="logout">${icon('out')}<span>Выйти</span></button></div>`;
         const br = $('.burger'); br ? $('.right').insertBefore(um, br) : $('.right').appendChild(um);
         const dd = um.querySelector('.udrop');
-        window.__gear?.remove();
-        um.querySelector('#open-set').onclick = () => { dd.classList.remove('open'); window.openSettings?.(); };
         um.querySelector('.uavatar').onclick = e => { e.stopPropagation(); dd.classList.toggle('open'); };
         document.addEventListener('click', e => { if (!um.contains(e.target)) dd.classList.remove('open'); });
         um.querySelector('#logout').onclick = async () => { await api('/api/logout', { method: 'POST' }).catch(() => {}); localStorage.removeItem('token'); localStorage.removeItem('role'); location.href = '/'; };
@@ -414,7 +420,13 @@
     // ---- профиль студента ----
     const pf = $('#profile-form');
     if (pf && me.role === 'student') {
-      api('/api/profile').then(p => { if ($('#email')) $('#email').textContent = p.email; for (const [k, v] of Object.entries(p)) if (pf.elements[k] && v != null) pf.elements[k].value = v; }).catch(fail);
+      api('/api/profile').then(p => {
+        if ($('#email')) $('#email').textContent = p.email;
+        for (const [k, v] of Object.entries(p)) if (pf.elements[k] && v != null) pf.elements[k].value = v;
+        if (profileHint && ['age', 'education', 'university', 'specialty', 'work_history', 'desired_experience'].includes(profileHintField)) {
+          pf.elements[profileHintField]?.focus({ preventScroll: false });
+        }
+      }).catch(fail);
       pf.addEventListener('submit', async e => {
         e.preventDefault();
         try { await api('/api/profile', { method: 'PUT', body: Object.fromEntries(new FormData(pf)) }); toast('Профиль сохранён ✓'); } catch (err) { fail(err); }
@@ -526,6 +538,11 @@
       const modes = ['vacancies', 'offers', 'mine'], tabs = $$('.tab');
       const isStudent = me?.role === 'student';
       let mode = isStudent ? hashIn(modes) : 'vacancies', dt, requestId = 0;
+      const categorySelect = $('#f-cat');
+      const requestedCategory = new URLSearchParams(location.search).get('category');
+      if (requestedCategory && [...categorySelect.options].some(option => option.value === requestedCategory)) {
+        categorySelect.value = requestedCategory;
+      }
       const note = $('#catalog-note');
       if (isStudent) note.hidden = true;
       else {
@@ -534,6 +551,7 @@
         if (me) { note.textContent = 'Просмотр каталога. Откликаться могут пользователи с аккаунтом студента.'; $$('.tab[data-mode=offers],.tab[data-mode=mine]').forEach(el => el.hidden = true); $('#f-fav').hidden = true; }
       }
       const filterToggle = $('#filter-toggle'), filterFields = $('#filters-extra');
+      if (requestedCategory && categorySelect.value) $('#filters').classList.add('expanded');
       const filterMedia = matchMedia('(max-width: 700px)');
       const syncFilters = () => {
         const open = $('#filters').classList.contains('expanded');

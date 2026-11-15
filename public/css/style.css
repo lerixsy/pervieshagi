@@ -29,7 +29,7 @@ nav{display:flex;align-items:center;justify-content:space-between;height:68px}
 .theme svg{width:18px;height:18px}
 .moon{display:none}[data-theme=light] .moon{display:block}[data-theme=light] .sun{display:none}
 .hero{padding-top:170px;min-height:100vh;position:relative;overflow:hidden}
-.hero::before{content:"";position:absolute;width:700px;height:700px;right:-200px;top:-100px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--text) 10%,transparent),transparent 65%);animation:float 12s ease-in-out infinite}
+.hero::before{content:"";position:absolute;width:700px;height:700px;right:-200px;top:-100px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--text) 8%,transparent),transparent 65%)}
 @keyframes float{50%{transform:translate(-40px,40px)}}
 .hero-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:64px;align-items:center;position:relative}
 .hero h1 span{color:var(--muted)}
@@ -55,6 +55,9 @@ nav{display:flex;align-items:center;justify-content:space-between;height:68px}
 .fields{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px}
 .fields span{padding:10px 18px;border:1px solid var(--line);border-radius:999px;font-size:.9rem;background:var(--card);transition:all .3s}
 .fields span:hover{background:var(--accent);color:var(--accent-text)}
+.profile-links a{display:inline-flex;align-items:center;min-height:44px;padding:10px 18px;border:1px solid var(--line);border-radius:999px;background:var(--card);font-size:.9rem;line-height:1.35;transition:background .3s,color .3s,border-color .3s,transform .3s}
+.profile-links a:hover{background:var(--accent);color:var(--accent-text);border-color:var(--accent);transform:translateY(-2px)}
+.profile-links a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .paths{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:56px}
 .faq{max-width:760px;margin-top:48px}
 .faq details{border-top:1px solid var(--line);padding:22px 0}
@@ -105,7 +108,7 @@ body::after{content:"";position:fixed;inset:0;z-index:3;pointer-events:none;opac
 main,footer{position:relative;z-index:1}
 .alt{background:color-mix(in srgb,var(--bg2) 60%,transparent)}
 .hero::before{background:radial-gradient(circle,var(--glow),transparent 65%)}
-.hero h1 span{background:linear-gradient(100deg,var(--sh));background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:shine 7s linear infinite}
+.hero h1 span{color:var(--muted);background:none;-webkit-text-fill-color:currentColor;animation:none}
 @keyframes shine{to{background-position:200% center}}
 .btn.primary{box-shadow:0 8px 30px -8px var(--glow)}
 .btn.primary:hover{box-shadow:0 0 38px var(--glow)}
@@ -156,9 +159,20 @@ a.tag:hover{background:var(--accent);color:var(--accent-text)}
 .msg small{display:block;opacity:.55;font-size:.7rem;margin-top:4px}
 @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}}
 .mform{display:flex;gap:10px;padding:14px;border-top:1px solid var(--line)}
-.mform input{flex:1;padding:13px 18px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit;outline:0;transition:border-color .3s}
+.mform input{flex:1;min-width:0;padding:13px 18px;border-radius:999px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit;outline:0;transition:border-color .3s}
 .mform input:focus{border-color:var(--text)}
-@media(max-width:860px){.chat{grid-template-columns:1fr;height:calc(100vh - 220px)}.chat .thread{display:none}.chat.open .thread{display:flex}.chat.open .clist{display:none}.back{display:block}}
+@media(max-width:860px){
+  .chat{grid-template-columns:minmax(0,1fr);height:clamp(280px,calc(100dvh - 280px - env(safe-area-inset-bottom)),680px);min-height:0}
+  .chat .card{min-height:0;min-width:0}
+  .chat .thread{display:none;height:100%;min-height:0}
+  .chat.open .thread{display:flex}
+  .chat.open .clist{display:none}
+  .chat .msgs{min-height:0}
+  .chat .mform{flex:0 0 auto;padding-bottom:max(14px,env(safe-area-inset-bottom))}
+  .back{display:grid;place-items:center;min-width:44px;min-height:44px}
+  body:has(.chat.open) .tabbar{display:none}
+  body.hastab:has(.chat.open){padding-bottom:env(safe-area-inset-bottom)}
+}
 /* ---- палитры ---- */
 [data-palette=gold][data-theme=dark]{--bg:#0a0805;--bg2:#0f0c07;--card:#14100a;--line:#2a2214;--text:#f4ecd8;--muted:#9a8f78;--accent:#d9c28a;--accent-text:#0a0805;--p:217,194,138;--sh:#8a7a52,#fff3cf,#8a7a52}
 [data-palette=gold][data-theme=light]{--bg:#f5f0e5;--bg2:#ece5d6;--card:#fbf8f0;--line:#dcd3bf;--text:#17140e;--muted:#786f5f;--accent:#17140e;--accent-text:#f5f0e5;--p:150,115,45;--sh:#6e6450,#b79f5f,#6e6450}
@@ -265,7 +279,7 @@ body{overflow-x:hidden}
 .tabbar svg{width:21px;height:21px}
 .tabbar a.on{color:var(--accent-text);background:var(--accent);box-shadow:0 6px 18px -6px var(--glow)}
 @media(max-width:860px){.tabbar{display:flex}body.hastab{padding-bottom:calc(96px + env(safe-area-inset-bottom))}.toast{bottom:calc(104px + env(safe-area-inset-bottom))}
-  .chat{height:calc(100dvh - 300px)}section{padding:70px 0}.inner{padding-top:110px}.stats4{grid-template-columns:repeat(2,1fr)}.sdrawer{width:100vw}}
+  section{padding:70px 0}.inner{padding-top:110px}.stats4{grid-template-columns:repeat(2,1fr)}.sdrawer{width:100vw}}
 .vbanner{position:fixed;top:68px;left:0;right:0;z-index:45;text-align:center;padding:9px 16px;font-size:.88rem;font-weight:600;background:var(--accent);color:var(--accent-text)}
 .vbanner a{text-decoration:underline;margin-left:8px}
 .linkbtn{background:none;border:0;color:var(--text);text-decoration:underline;font:inherit;cursor:pointer}.linkbtn[disabled]{color:var(--muted);text-decoration:none;cursor:default}
@@ -303,12 +317,7 @@ body{overflow-x:hidden}
 @media(max-width:860px){.filters{grid-template-columns:1fr 1fr}.filters input[type=search]{grid-column:1/-1}}
 .vac .acts{flex-wrap:wrap;align-items:center}
 .chat.single{grid-template-columns:1fr;height:calc(100dvh - 330px)}
-/* живые эффекты */
-.marquee{overflow:hidden;border-block:1px solid var(--line);padding:18px 0;position:relative;z-index:1;-webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
-.marquee .track{display:flex;gap:48px;width:max-content;animation:mq 30s linear infinite}
-.marquee span{font-size:1.5rem;font-weight:700;letter-spacing:-.02em;color:var(--muted);white-space:nowrap}
-.marquee span::after{content:"✦";margin-left:48px;color:var(--text);opacity:.45}
-@keyframes mq{to{transform:translateX(-50%)}}
+/* Живые эффекты главной страницы определены ниже. */
 .rot{display:inline-block;transition:opacity .45s,transform .45s var(--ease),filter .45s}
 .rot.swap{opacity:0;transform:translateY(.25em);filter:blur(6px)}
 .tw{transition:transform .35s var(--ease);will-change:transform}
@@ -685,20 +694,6 @@ header nav{gap:20px}
 .vacancy-publish[open]>summary{margin-bottom:20px}
 @media(max-width:700px){.company-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.company-stats>.stat:last-child{grid-column:1/-1}.vacancy-publish>summary{width:100%}}
 
-/* v7 — парящий пример профиля: reveal, парение и курсор на разных слоях */
-.profile-scene{min-width:0;perspective:1100px;padding:12px 0}
-.profile-drift{animation:profile-drift 6.8s ease-in-out infinite;transform-origin:50% 60%}
-.hero .profile{animation:none}
-.hero .profile.reveal.in{animation:revealIn 1.3s var(--ease2) backwards;animation-delay:var(--d,0s)}
-.profile-tilt{transform:translate3d(var(--profile-x,0px),var(--profile-y,0px),0) rotateX(var(--profile-rx,0deg)) rotateY(var(--profile-ry,0deg));transition:transform .65s var(--ease2);transform-style:preserve-3d}
-.profile-tilt.dragging{transition:transform .12s ease-out;user-select:none}
-@keyframes profile-drift{0%,100%{transform:translate3d(0,0,0) rotate(-.35deg)}50%{transform:translate3d(5px,-10px,0) rotate(.45deg)}}
-@media(hover:hover) and (pointer:fine){.profile-tilt{cursor:grab}.profile-tilt.dragging{cursor:grabbing}}
-@media(max-width:860px){.profile-drift{animation-name:profile-drift-mobile}.profile-scene{padding:8px 0}}
-@keyframes profile-drift-mobile{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
-html[data-motion=off] .profile-tilt{transform:none;will-change:auto;cursor:default}
-@media(prefers-reduced-motion:reduce){.profile-drift{animation:none}.profile-tilt{transform:none;will-change:auto}}
-
 /* v7 — реальные компании и полученные отклики в секции «Живые цифры» */
 .home-partners{margin-top:56px;border-top:1px solid var(--line);padding-top:40px}
 .partners-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:24px}
@@ -724,3 +719,82 @@ html[data-motion=off] .profile-tilt{transform:none;will-change:auto;cursor:defau
 .partners-status{grid-column:1/-1;min-height:88px;display:flex;align-items:center;padding:20px;border:1px solid var(--line);border-radius:var(--r);font-size:16px;line-height:1.6;color:var(--muted)}
 @media(max-width:1100px){.partner-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.home-partners{margin-top:40px;padding-top:32px}.partners-heading{gap:16px}.partners-heading h3{font-size:24px}.partners-label{display:none}.partner-grid{grid-template-columns:minmax(0,1fr);gap:16px}.partner-card.card{padding:20px}.partners-controls .btn{width:100%}}
+
+
+
+/* Направления — переходы в каталог с выбранным фильтром. */
+.direction-links{align-items:center}
+.direction-link{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:9px 16px;border:1px solid var(--line);border-radius:999px;background:var(--card);font-size:14px;line-height:1.4;transition:background .25s,color .25s,border-color .25s,transform .25s var(--ease)}
+.direction-link:hover{background:var(--accent);color:var(--accent-text);border-color:var(--accent);transform:translateY(-2px)}
+.direction-link:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+/* Бегущая строка главной страницы. */
+.marquee{overflow:hidden;border-block:1px solid var(--line);padding:18px 0;position:relative;z-index:1;-webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent);mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+.marquee .track{display:flex;gap:48px;width:max-content;animation:mq 30s linear infinite}
+.marquee span{font-size:1.5rem;font-weight:700;letter-spacing:-.02em;color:var(--muted);white-space:nowrap}
+.marquee span::after{content:"✦";margin-left:48px;color:var(--text);opacity:.45}
+@keyframes mq{to{transform:translateX(-50%)}}
+.marquee:hover .track{animation-play-state:paused}
+[data-motion=off] .marquee .track{animation:none;transform:none}
+
+/* Плавающая сцена с примерами профилей студента и компании. */
+.hero-grid{grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:40px}
+.hero h1{font-size:clamp(2.5rem,3.8vw,3.4rem)}
+.profile-scene{position:relative;display:grid;grid-template-columns:minmax(0,1fr);align-items:center;min-width:0;min-height:480px;perspective:1100px;padding:18px 0}
+.profile-drift{grid-area:1/1;position:relative;justify-self:end;align-self:center;width:min(100%,420px);transform-origin:50% 60%;opacity:0;visibility:hidden;pointer-events:none;transform:translateY(8px) scale(.99);transition:opacity .55s ease,transform .55s ease,visibility 0s linear .55s}
+.profile-drift.is-active{opacity:1;visibility:visible;pointer-events:auto;transform:none;animation:profile-drift 6.8s ease-in-out infinite;transition-delay:0s}
+.hero .profile{margin:0;border-radius:24px;padding:26px;box-shadow:0 30px 80px -34px rgba(0,0,0,.48);animation:none;overflow:hidden}
+.hero .profile.reveal.in{animation:revealIn 1.1s var(--ease2) backwards;animation-delay:var(--d,0s)}
+.profile-tilt{transform:translate3d(var(--profile-x,0px),var(--profile-y,0px),0) rotateX(var(--profile-rx,0deg)) rotateY(var(--profile-ry,0deg));transition:transform .65s var(--ease2);transform-style:preserve-3d}
+.profile-tilt.dragging{transition:transform .12s ease-out;user-select:none}
+.profile-student .ph{margin-bottom:18px}
+.profile-student .profile-interests{display:block}
+.profile-student .profile-interests>span{display:block;text-align:left;margin-top:8px}
+.profile-student .profile-interests .tag{font-style:normal}
+.profile-company .row{display:block}
+.profile-company .row span{display:block;text-align:left;margin-top:3px;font-size:13px}
+.muted-cap{display:block;color:var(--muted);font-size:12px;letter-spacing:.14em;text-transform:uppercase;margin-bottom:18px}
+.company-profile-head{display:flex;align-items:center;gap:12px;margin:2px 0 18px}
+.company-profile-head>div:last-child{min-width:0}
+.company-profile-head b,.company-profile-head small{display:block}
+.company-profile-head b{font-size:16px;line-height:1.3}
+.company-profile-head small{font-size:13px;color:var(--muted);line-height:1.45;margin-top:4px}
+.company-mark{width:44px;height:44px;display:grid;place-items:center;flex:none;border:1px solid var(--line);border-radius:14px;background:var(--bg2);font-weight:800;font-size:21px}
+.company-open-role{display:flex;align-items:center;gap:10px;margin-top:16px;padding:12px 14px;border-radius:14px;background:var(--bg2);font-size:13px;line-height:1.45}
+.company-open-role b{margin-left:auto;font-size:18px}
+.company-online{width:8px;height:8px;flex:none;border-radius:50%;background:#58b889;box-shadow:0 0 12px #58b88988}
+@keyframes profile-drift{0%,100%{transform:translate3d(0,0,0) rotate(-.35deg)}50%{transform:translate3d(5px,-10px,0) rotate(.45deg)}}
+@media(hover:hover) and (pointer:fine){.profile-tilt{cursor:grab}.profile-tilt.dragging{cursor:grabbing}}
+html[data-motion=off] .profile-drift{animation:none}
+html[data-motion=off] .profile-tilt{transform:none;will-change:auto;cursor:default}
+@media(max-width:1100px){
+  .hero-grid{grid-template-columns:minmax(0,1fr);gap:32px}
+  .profile-scene{min-height:0;padding:0;display:grid;gap:0}
+  .profile-drift{position:relative;inset:auto;width:100%;max-width:540px}
+}
+@media(min-width:1101px){.hero .trust{gap:10px}}
+@media(max-width:520px){
+  .hero .profile{padding:22px;border-radius:20px}
+  .marquee{padding:15px 0}
+  .marquee .track{gap:32px}
+  .marquee span{font-size:1.2rem}
+  .marquee span::after{margin-left:32px}
+}
+@media(prefers-reduced-motion:reduce){
+  .profile-drift{animation:none}
+  .profile-tilt{transform:none;will-change:auto}
+  .marquee .track{animation:none!important;transform:none}
+}
+.toast{width:max-content;max-width:calc(100vw - 32px);padding:12px 18px;border-radius:16px;text-align:center;line-height:1.45}
+.toast.profile-hint{padding:8px 14px;border-radius:14px;font-size:.82rem;line-height:1.35}
+@media(max-width:860px){.toast{top:calc(72px + env(safe-area-inset-top));bottom:auto}}
+
+/* Support is a single chat: keep its conversation visible on phones. */
+.chat.single .thread{display:flex;min-height:0}
+@media(max-width:860px){
+  .chat.single{grid-template-columns:minmax(0,1fr);height:clamp(320px,48dvh,480px);min-height:320px}
+  .chat.single .thread{display:flex;height:100%;min-height:0}
+  .chat.single .msgs{min-height:0}
+  .chat.single .mform{flex:0 0 auto;align-items:flex-end}
+  .chat.single .mform textarea{flex:1;min-width:0;font-size:16px}
+}

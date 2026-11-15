@@ -27,17 +27,43 @@
   }
   mq.addEventListener('change', () => { if (S.mode === 'auto') apply(); });
   apply();
-  reducedMotion.addEventListener('change', () => { apply(); pc(); });
   root.classList.remove('no-js');
-  let sync = () => {}, pc = () => {};
+  let sync = () => {}, pc = () => {}, syncProfiles = () => {};
   let tm;
+  reducedMotion.addEventListener('change', () => { apply(); pc(); syncProfiles(); });
   const commit = () => { // плавная смена темы и палитры
     root.classList.add('theming'); clearTimeout(tm); tm = setTimeout(() => root.classList.remove('theming'), 800);
-    apply(); save(); sync(); pc();
+    apply(); save(); sync(); pc(); syncProfiles();
   };
 
   const tb = document.getElementById('theme');
-  if (tb) tb.addEventListener('click', () => { S.mode = root.dataset.theme === 'dark' ? 'light' : 'dark'; commit(); });
+  const profileSlides = $$('[data-profile-slide]');
+  let profileIndex = Math.max(0, profileSlides.findIndex(el => el.classList.contains('is-active')));
+  let profileTimer = 0, profileFadeTimer = 0;
+  const setProfileSlide = index => {
+    profileIndex = index;
+    profileSlides.forEach((slide, i) => {
+      const active = i === profileIndex;
+      slide.classList.toggle('is-active', active);
+      slide.setAttribute('aria-hidden', String(!active));
+    });
+  };
+  syncProfiles = () => {
+    clearTimeout(profileTimer); clearTimeout(profileFadeTimer);
+    if (!profileSlides.length) return;
+    setProfileSlide(profileIndex);
+    if (profileSlides.length < 2 || !S.motion || reducedMotion.matches || document.hidden) return;
+    profileTimer = setTimeout(() => {
+      profileSlides[profileIndex].classList.remove('is-active');
+      profileSlides[profileIndex].setAttribute('aria-hidden', 'true');
+      profileFadeTimer = setTimeout(() => {
+        setProfileSlide((profileIndex + 1) % profileSlides.length);
+        syncProfiles();
+      }, 560);
+    }, 5000);
+  };
+  syncProfiles();
+  document.addEventListener('visibilitychange', syncProfiles);
 
   // ---- прогресс, появление блоков, подсветка карточек ----
   const bar = document.querySelector('.progress'), header = document.querySelector('header');
@@ -71,12 +97,11 @@
     </div>
     <div class="sfoot"><button class="btn sm" id="sreset">Сбросить настройки</button></div></aside>`;
   document.body.appendChild(ui);
-  const gear = document.createElement('button');
-  gear.className = 'theme'; gear.setAttribute('aria-label', 'Настройки');
-  gear.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 01-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 010-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 014 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 010 4h-.1a1.7 1.7 0 00-1.5 1z"/></svg>';
-  if (tb) tb.insertAdjacentElement('afterend', gear);
-  gear.onclick = () => ui.classList.add('open');
-  window.openSettings = () => ui.classList.add('open'); window.__gear = gear;
+  window.openSettings = () => ui.classList.add('open');
+  if (tb) {
+    tb.setAttribute('aria-label', 'Настройки темы и оформления');
+    tb.onclick = () => window.openSettings();
+  }
   addEventListener('keydown', e => { if (e.key === 'Escape') ui.classList.remove('open'); });
   const fmt = { density: v => Math.round(v * 100) + '%', speed: v => Math.round(v * 100) + '%', glow: v => Math.round(v * 100) + '%', radius: v => v + 'px', font: v => Math.round(v * 100) + '%' };
   sync = () => {
