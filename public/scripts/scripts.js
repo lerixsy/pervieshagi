@@ -11,17 +11,20 @@
     { id: 'ruby', name: 'Бордо', d: ['#0b0406', '#ff8fa3'], l: ['#faf0f0'] },
     { id: 'amethyst', name: 'Аметист', d: ['#07050d', '#c4a6ff'], l: ['#f3f0fa'] }
   ];
-  const DEF = { mode: 'auto', palette: 'mono', particles: true, density: 1, speed: 1, glow: 1, grain: true, radius: 20, font: 1, motion: true };
+  const DEF = { mode: 'auto', palette: 'mono', particles: true, density: 1, speed: 1, glow: 1, grain: true, radius: 20, font: 1, motion: true, respectOS: false };
   let S = { ...DEF };
   try {
     const saved = JSON.parse(localStorage.getItem('settings') || 'null');
     if (saved) S = { ...DEF, ...saved }; else if (localStorage.getItem('theme')) S.mode = localStorage.getItem('theme');
   } catch {}
+  // Системная настройка «уменьшить движение» учитывается только если включить её в «Оформление и тема».
+  // Иначе при выключенных анимациях Windows не работают бегущая строка, смена слов и наклон карточки.
+  const osReduce = () => !!S.respectOS && reducedMotion.matches;
   const save = () => { try { localStorage.setItem('settings', JSON.stringify(S)); } catch {} };
   const mq = matchMedia('(prefers-color-scheme: dark)');
   function apply() {
     const dark = S.mode === 'auto' ? mq.matches : S.mode === 'dark';
-    root.dataset.theme = dark ? 'dark' : 'light'; root.dataset.palette = S.palette; root.dataset.motion = S.motion && !reducedMotion.matches ? 'on' : 'off';
+    root.dataset.theme = dark ? 'dark' : 'light'; root.dataset.palette = S.palette; root.dataset.motion = S.motion && !osReduce() ? 'on' : 'off'; root.dataset.osReduce = osReduce() ? 'on' : 'off';
     root.style.setProperty('--gk', S.glow); root.style.setProperty('--r', S.radius + 'px'); root.style.setProperty('--fs', S.font);
     root.style.setProperty('--grain', S.grain ? '' : '0');
   }
@@ -52,7 +55,7 @@
     clearTimeout(profileTimer); clearTimeout(profileFadeTimer);
     if (!profileSlides.length) return;
     setProfileSlide(profileIndex);
-    if (profileSlides.length < 2 || !S.motion || reducedMotion.matches || document.hidden) return;
+    if (profileSlides.length < 2 || !S.motion || osReduce() || document.hidden) return;
     profileTimer = setTimeout(() => {
       profileSlides[profileIndex].classList.remove('is-active');
       profileSlides[profileIndex].setAttribute('aria-hidden', 'true');
@@ -93,7 +96,7 @@
       <div class="sgroup"><h4>Режим</h4><div class="seg"><button data-v="dark">Тёмный</button><button data-v="light">Светлый</button><button data-v="auto">Авто</button></div></div>
       <div class="sgroup"><h4>Цветовая палитра</h4><div class="pals">${PAL.map(p => `<button class="pal" data-v="${p.id}" style="--a:${p.d[0]};--b:${p.l[0]};--c:${p.d[1]}"><i></i>${p.name}</button>`).join('')}</div></div>
       <div class="sgroup"><h4>Частицы</h4>${sw('particles', 'Показывать частицы')}${rg('density', 'Количество', .2, 2, .1)}${rg('speed', 'Скорость', .3, 2.5, .1)}</div>
-      <div class="sgroup"><h4>Оформление</h4>${rg('glow', 'Яркость свечения', 0, 1.6, .1)}${rg('radius', 'Скругление углов', 6, 34, 1)}${rg('font', 'Размер текста', .9, 1.2, .05)}${sw('grain', 'Плёночное зерно')}${sw('motion', 'Плавные анимации')}</div>
+      <div class="sgroup"><h4>Оформление</h4>${rg('glow', 'Яркость свечения', 0, 1.6, .1)}${rg('radius', 'Скругление углов', 6, 34, 1)}${rg('font', 'Размер текста', .9, 1.2, .05)}${sw('grain', 'Плёночное зерно')}${sw('motion', 'Плавные анимации')}${sw('respectOS', 'Учитывать системное «уменьшить движение»')}</div>
     </div>
     <div class="sfoot"><button class="btn sm" id="sreset">Сбросить настройки</button></div></aside>`;
   document.body.appendChild(ui);
@@ -153,7 +156,7 @@
     if (document.hidden) return;
     if (!S.particles) { ctx.clearRect(0, 0, W, H); raf = 0; return; }
     const animate = true; // частицы живут по своему переключателю «Показывать частицы»
-    const slow = reducedMotion.matches || !S.motion ? .45 : 1;
+    const slow = osReduce() || !S.motion ? .45 : 1;
     const elapsed = Math.min((time - (lastTick || time - 16.67)) / 16.67, 2);
     if (animate && mobile && time - lastTick < 32) { raf = requestAnimationFrame(tick); return; }
     lastTick = time;
@@ -264,7 +267,7 @@
   // ---- анимированные счётчики ----
   const run = el => {
     const to = Number(el.dataset.count) || 0, suf = el.dataset.suffix || '', t0 = performance.now();
-    if (!S.motion || reducedMotion.matches) { el.textContent = to + suf; return; }
+    if (!S.motion || osReduce()) { el.textContent = to + suf; return; }
     const step = t => { const p = Math.min(1, (t - t0) / 1000); el.textContent = Math.round(to * (1 - Math.pow(1 - p, 3))) + suf; if (p < 1) requestAnimationFrame(step); };
     requestAnimationFrame(step);
   };
@@ -274,7 +277,7 @@
 
   // ---- конфетти ----
   window.burst = (x, y) => {
-    if (!S.motion || reducedMotion.matches) return;
+    if (!S.motion || osReduce()) return;
     for (let i = 0; i < 28; i++) {
       const el = document.createElement('i'); el.className = 'cf';
       el.style.left = x + 'px'; el.style.top = y + 'px';
@@ -291,7 +294,7 @@
   $$('[data-tilt]').forEach(t => {
     const scene = t.closest('.profile-scene') || t;
     let frame = 0, drag = null, target = { x: 0, y: 0, rx: 0, ry: 0 };
-    const allowed = e => finePointer.matches && e.pointerType !== 'touch' && S.motion && !reducedMotion.matches;
+    const allowed = e => finePointer.matches && e.pointerType !== 'touch' && S.motion && !osReduce();
     const clamp = (n, max) => Math.max(-max, Math.min(max, n));
     const update = next => {
       target = next;
@@ -326,6 +329,6 @@
     const w = el.dataset.words.split('|'); let i = 0;
     el.innerHTML = '<span class="sr-only">' + w[0].replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])) + '</span>' + w.map((t, k) => `<span aria-hidden="true" class="rw${k ? '' : ' on'}">${t.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))}</span>`).join('');
     const items = [...el.querySelectorAll('.rw')];
-    setInterval(() => { if (!S.motion || reducedMotion.matches || document.hidden) return; items[i].classList.remove('on'); i = (i + 1) % items.length; items[i].classList.add('on'); }, 4800);
+    setInterval(() => { if (!S.motion || osReduce() || document.hidden) return; items[i].classList.remove('on'); i = (i + 1) % items.length; items[i].classList.add('on'); }, 4800);
   });
 })();

@@ -47,7 +47,7 @@
   </div>
   <div data-pane="overview"><div id="aov"></div></div>
   <div data-pane="users" hidden>
-    <div class="filters" style="grid-template-columns:2fr 1fr"><input type="search" id="uq" placeholder="Поиск по имени или email"><select id="urole"><option value="">Все роли</option><option value="student">Студенты</option><option value="company">Компании</option><option value="pending">Ожидают одобрения</option><option value="admin">Админы</option></select></div>
+    <div class="filters" style="grid-template-columns:2fr 1fr"><input type="search" id="uq" placeholder="Поиск по имени или email"><select id="urole"><option value="">Все роли</option><option value="student">Студенты</option><option value="company">Компании</option><option value="pending">Ожидают одобрения</option><option value="unverified">Не подтвердили email</option><option value="admin">Админы</option></select></div>
     <div class="vlist" id="ulist"></div>
   </div>
   <div data-pane="vacancies" hidden><div class="vlist" id="avlist"></div></div>
@@ -55,7 +55,7 @@
     <div class="chat" id="achat" style="margin-top:0">
       <div class="card clist" id="alist"></div>
       <div class="card thread">
-        <div class="chead"><a href="#support" class="back" id="aback">←</a><div style="flex:1"><b id="aname">Выберите обращение</b><small id="amail"></small></div><button class="btn sm" id="astatus" hidden>Закрыть</button></div>
+        <div class="chead"><a href="#support" class="back" id="aback">←</a><div style="flex:1"><b id="aname">Выберите обращение</b><small id="amail"></small></div><button class="btn sm" id="astatus" hidden>Закрыть</button><button class="btn sm" id="adel" type="button" hidden>Удалить</button></div>
         <div id="acomp" class="acomp" hidden></div>
         <div class="msgs" id="amsgs"><p class="empty">Выберите обращение слева</p></div>
         <form id="aform" class="mform" hidden><input name="text" placeholder="Ответ пользователю…" autocomplete="off" maxlength="1000"><button class="btn primary sm">Отправить</button></form>

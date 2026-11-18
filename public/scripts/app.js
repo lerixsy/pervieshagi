@@ -63,7 +63,44 @@
     try { const u = new URL(/^https?:\/\//i.test(value) ? value : 'https://' + value); return /^https?:$/.test(u.protocol) ? u.href : null; } catch { return null; }
   };
   const matchRow = v => v.match == null ? '' : `<div class="mrow"><span class="mpill ${v.match >= 70 ? 'hi' : ''}" style="--v:${v.match}"><b>${v.match}%</b> совпадение</span>${(v.why || []).map(w => `<span class="tag why">${esc(w)}</span>`).join('')}</div>`;
-  const bub = m => `<div class="msg ${m.mine ? 'me' : ''}"><p>${esc(m.text)}</p><small>${when(m.created_at)}</small></div>`;
+  const bub = m => `<div class="msg ${m.mine ? 'me' : ''}" data-id="${m.id}">${m.reply_id ? `<div class="mq" data-goto="${m.reply_id}"><b>${m.reply_mine ? 'Вы' : 'Собеседник'}</b><span>${esc(m.reply_text || 'Сообщение недоступно')}</span></div>` : ''}<p>${esc(m.text)}</p><small>${when(m.created_at)}</small><button class="mreply" type="button" data-reply="${m.id}" aria-label="Ответить на сообщение" title="Ответить">↩</button></div>`;
+  // ответ на конкретное сообщение: плашка над полем ввода, цитата в сообщении, переход к оригиналу по клику
+  function useReply(msgsEl, form) {
+    const bar = document.createElement('div'); bar.className = 'rbar'; bar.hidden = true; form.parentNode.insertBefore(bar, form);
+    let cur = null;
+    const set = m => {
+      cur = m; bar.hidden = !m;
+      if (m) { bar.innerHTML = `<div><b>${esc(m.who)}</b><span>${esc(m.text)}</span></div><button type="button" aria-label="Отменить ответ">✕</button>`; form.elements.text?.focus(); }
+    };
+    bar.addEventListener('click', e => { if (e.target.closest('button')) set(null); });
+    msgsEl.addEventListener('click', e => {
+      const r = e.target.closest('[data-reply]');
+      if (r) { const el = r.closest('.msg'); set({ id: Number(el.dataset.id), who: el.classList.contains('me') ? 'Вы' : 'Собеседник', text: el.querySelector('p').textContent.slice(0, 120) }); return; }
+      const q = e.target.closest('[data-goto]');
+      if (q) { const t = msgsEl.querySelector(`.msg[data-id="${q.dataset.goto}"]`); if (t) { t.scrollIntoView({ block: 'center', behavior: 'smooth' }); t.classList.add('flash'); setTimeout(() => t.classList.remove('flash'), 1400); } }
+    });
+    return { get: () => cur ? cur.id : null, clear: () => set(null) };
+  }
+  // окно удаления чата: «только у меня» или «у обоих»
+  function openDeleteChat({ title, onChoose }) {
+    const bk = document.createElement('div'); bk.className = 'mbk';
+    bk.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><h3>Удалить чат?</h3><p class="lead">${esc(title)}</p>
+      <div class="del-opts">
+        <button class="del-opt" data-scope="me" type="button"><b>Удалить только у меня</b><span>Переписка пропадёт из вашего списка. У собеседника останется. Если придёт новое сообщение, чат появится снова.</span></button>
+        <button class="del-opt danger" data-scope="both" type="button"><b>Удалить у обоих</b><span>Все сообщения будут стёрты безвозвратно — и у вас, и у собеседника.</span></button>
+      </div><div class="mact"><button class="btn" id="del-cancel" type="button">Отмена</button></div></div>`;
+    document.body.appendChild(bk);
+    const close = () => { bk.remove(); removeEventListener('keydown', onKey); };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    addEventListener('keydown', onKey);
+    bk.addEventListener('click', async e => {
+      if (e.target === bk) return close();
+      const b = e.target.closest('[data-scope]'); if (!b) return;
+      bk.querySelectorAll('button').forEach(x => x.disabled = true);
+      try { await onChoose(b.dataset.scope); close(); } catch (err) { bk.querySelectorAll('button').forEach(x => x.disabled = false); fail(err); }
+    });
+    bk.querySelector('#del-cancel').onclick = close;
+  }
   const mkPane = (el, url, empty) => {
     let last = 0;
     return async reset => {
@@ -86,7 +123,10 @@
   };
   // графики и карточки дашбордов
   const bars = s => { const m = Math.max(1, ...s.map(x => x.n)); return `<div class="bars">${s.map(x => `<div class="bar"><b>${x.n}</b><i style="--h:${Math.round(x.n / m * 100)}%"></i><small>${x.label}</small></div>`).join('')}</div>`; };
-  const statc = (n, l, d = 0) => `<div class="card stat rise" style="--d:${d}s"><b data-count="${n}">0</b><small>${l}</small></div>`;
+  // карточка-счётчик; если задан href — карточка кликабельна (role: фильтр списка пользователей в админке)
+  const statc = (n, l, d = 0, href = '', role = null) => href
+    ? `<a class="card stat stat-link rise" style="--d:${d}s" href="${href}"${role !== null ? ` data-role="${role}"` : ''}><b data-count="${n}">0</b><small>${l}</small><i class="stat-go" aria-hidden="true">→</i></a>`
+    : `<div class="card stat rise" style="--d:${d}s"><b data-count="${n}">0</b><small>${l}</small></div>`;
   const ring = v => `<div class="ring" style="--v:${v}"><b data-count="${v}" data-suffix="%">0</b></div>`;
 
   // ---- уведомления ----
@@ -204,6 +244,8 @@
     };
     if (['login', 'register', 'forgot'].includes(page) && me) return location.href = afterAuth();
     if (page === 'profile') return location.href = '/pages/account.html#profile';
+    $$('[data-profile-link]').forEach(a => { a.href = me ? (me.role === 'admin' ? cabinet() : '/pages/account.html#profile') : '/pages/register.html'; });
+    $$('[data-signup-link]').forEach(a => { if (me) a.href = cabinet(); });
     const flash = sessionStorage.getItem('flash'); if (flash) { sessionStorage.removeItem('flash'); toast(flash); }
     const profileHint = page === 'account' && new URLSearchParams(location.search).get('hint') === 'profile';
     const profileHintField = new URLSearchParams(location.search).get('field');
@@ -378,14 +420,14 @@
             <div class="dtop"><div class="card rise" style="text-align:center;--d:.05s"><h4>Заполненность профиля</h4>${ring(d.completeness)}
               <p style="color:var(--muted);font-size:.92rem;margin-bottom:16px">${d.completeness < 100 ? 'Чем полнее анкета, тем чаще вас находят компании.' : 'Отлично, профиль полностью заполнен!'}</p>
               <a class="btn primary sm" href="/pages/account.html#profile">${d.completeness < 100 ? 'Дополнить' : 'Открыть профиль'}</a></div>
-              <div class="stats4 s2">${statc(d.stats.responses, 'Мои отклики', .1)}${statc(d.stats.offers, 'Новые предложения', .15)}${statc(d.stats.accepted, 'Принято', .2)}${statc(d.stats.favs, 'В избранном', .25)}</div></div>
+              <div class="stats4 s2">${statc(d.stats.responses, 'Мои отклики', .1, '/pages/vacancies.html#mine')}${statc(d.stats.offers, 'Новые предложения', .15, '/pages/vacancies.html#offers')}${statc(d.stats.accepted, 'Принято', .2, '/pages/vacancies.html#mine')}${statc(d.stats.favs, 'В избранном', .25, '/pages/vacancies.html')}</div></div>
             <div class="card rise" style="--d:.28s"><h4>Подобрано для вас</h4>${picksHtml}</div>
             <div class="dcols"><div class="card rise" style="--d:.3s"><h4>Отклики за 7 дней</h4>${bars(d.series)}</div><div class="card rise" style="--d:.35s"><h4>Последняя активность</h4>${rec}</div></div>
             <div class="qa rise" style="--d:.4s"><a class="btn primary" href="/pages/vacancies.html">Найти вакансии</a><a class="btn" href="/pages/resume.html#me">Резюме в PDF</a><a class="btn" href="/pages/chat.html">Открыть чаты</a><a class="btn" href="/pages/support.html">Поддержка</a></div></div>`;
         } else if (d.kind === 'company') {
           const top = d.top.length ? d.top.map(v => `<a class="mini" href="${vacancyUrl(v.id)}"><span>${esc(v.title)}<br><small>${v.is_active ? 'активна' : 'закрыта'}</small></span><span class="tag">${v.responses} откл.</span></a>`).join('') : '<p class="empty" style="padding:20px 0">Опубликуйте первую вакансию</p>';
           dash.innerHTML = hello(esc(d.name || 'Ваша компания'), 'Сводка по вакансиям, откликам и приглашениям.') + `<div class="dash">
-            <div class="stats4">${statc(d.stats.vacancies, 'Активных вакансий', .05)}${statc(d.stats.responses, 'Откликов', .1)}${statc(d.stats.invites, 'Приглашений', .15)}${statc(d.stats.accepted, 'Принято', .2)}</div>
+            <div class="stats4">${statc(d.stats.vacancies, 'Активных вакансий', .05, '/pages/company.html#vacancies')}${statc(d.stats.responses, 'Откликов', .1, '/pages/company.html#responses')}${statc(d.stats.invites, 'Приглашений', .15, '/pages/company.html#responses')}${statc(d.stats.accepted, 'Принято', .2, '/pages/company.html#responses')}</div>
             <div class="dcols"><div class="card rise" style="--d:.25s"><h4>Отклики за 7 дней</h4>${bars(d.series)}</div><div class="card rise" style="--d:.3s"><h4>Лучшие вакансии</h4>${top}</div></div>
             ${me.approved ? '<div class="qa rise" style="--d:.35s"><a class="btn primary" href="/pages/company.html#vacancies">Новая вакансия</a><a class="btn" href="/pages/company.html#students">Найти студентов</a><a class="btn" href="/pages/company.html#responses">Отклики</a></div>'
               : '<div class="card rise" style="--d:.35s"><h4>Статус заявки</h4><p style="margin-bottom:16px;color:var(--muted)">Мы проверяем вашу компанию. Опишите её в чате поддержки — после проверки откроются вакансии и приглашения студентов.</p><a class="btn primary" href="/pages/support.html">Оставить заявку</a></div>'}</div>`;
@@ -615,6 +657,11 @@
     if (page === 'chat') {
       const box = $('#chat'), cl = $('#clist'), msgs = $('#msgs'), form = $('#msg-form');
       let cur = null, pane = null;
+      const reply = useReply(msgs, form);
+      $('#cdel').onclick = () => openDeleteChat({
+        title: `${$('#cname2').textContent} · ${$('#ctitle').textContent}`,
+        onChoose: async scope => { await api(`/api/chats/${cur}?scope=${scope}`, { method: 'DELETE' }); toast(scope === 'both' ? 'Чат удалён у обоих' : 'Чат удалён у вас'); cl.dataset.h = ''; location.hash = ''; }
+      });
       const nameFor = c => role() === 'company' ? (c.full_name || 'Студент') : c.company;
       async function loadList() {
         const cs = await api('/api/chats');
@@ -623,7 +670,7 @@
         if (cl.dataset.h !== html) { cl.innerHTML = html; cl.dataset.h = html; }
       }
       async function select() {
-        cur = Number(location.hash.slice(1)) || null; box.classList.toggle('open', !!cur); form.hidden = !cur;
+        cur = Number(location.hash.slice(1)) || null; box.classList.toggle('open', !!cur); form.hidden = !cur; reply.clear(); $('#cdel').hidden = !cur;
         if (!cur) { pane = null; msgs.innerHTML = '<p class="empty">Выберите диалог слева</p>'; $('#cname2').textContent = 'Выберите чат'; $('#ctitle').textContent = ''; return loadList(); }
         pane = mkPane(msgs, `/api/chats/${cur}/messages`, '<p class="empty">Сообщений пока нет — поприветствуйте собеседника</p>');
         try { const d = await pane(true); $('#cname2').innerHTML = role() === 'company' ? `<a class="entity-link" href="${studentUrl(d.student_id)}">${esc(d.student)}</a>` : d.company_id ? `<a class="entity-link" href="${companyUrl(d.company_id)}">${esc(d.company)}</a>` : esc(d.company); $('#ctitle').textContent = d.title; }
@@ -634,7 +681,7 @@
       form.addEventListener('submit', async e => {
         e.preventDefault();
         const t = form.elements.text.value.trim(); if (!t) return; form.elements.text.value = '';
-        try { await api(`/api/chats/${cur}/messages`, { method: 'POST', body: { text: t } }); await pane(false); loadList(); }
+        try { await api(`/api/chats/${cur}/messages`, { method: 'POST', body: { text: t, reply_to: reply.get() } }); reply.clear(); await pane(false); loadList(); }
         catch (err) { fail(err); form.elements.text.value = t; }
       });
       setInterval(() => { pane?.(false).catch(() => {}); loadList().catch(() => {}); }, 3500);
@@ -650,12 +697,13 @@
         $('#fill-tpl').onclick = () => { sf.elements.text.value = tpl; sf.elements.text.rows = 6; sf.elements.text.focus(); };
       }
       sf.elements.text.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sf.requestSubmit(); } });
+      const reply = useReply($('#smsgs'), sf);
       const pane = mkPane($('#smsgs'), '/api/support/messages', '<p class="empty">Здравствуйте! Опишите вопрос — мы ответим здесь.</p>');
       pane(true).catch(fail);
       sf.addEventListener('submit', async e => {
         e.preventDefault();
         const t = sf.elements.text.value.trim(); if (!t) return; sf.elements.text.value = ''; sf.elements.text.rows = 2;
-        try { await api('/api/support/messages', { method: 'POST', body: { text: t } }); await pane(false); } catch (err) { fail(err); sf.elements.text.value = t; }
+        try { await api('/api/support/messages', { method: 'POST', body: { text: t, reply_to: reply.get() } }); reply.clear(); await pane(false); } catch (err) { fail(err); sf.elements.text.value = t; }
       });
       setInterval(() => pane(false).catch(() => {}), 4000);
     }
@@ -776,8 +824,8 @@
       const loaded = {};
       async function overview() {
         const d = await api('/api/dashboard'), s = d.stats;
-        $('#aov').innerHTML = `<div class="dash" style="margin-top:0"><div class="stats4">${statc(s.users, 'Пользователей', .05)}${statc(s.students, 'Студентов', .1)}${statc(s.companies, 'Компаний', .15)}${statc(s.unverified, 'Не подтвердили email', .2)}
-          ${statc(s.vacancies, 'Вакансий', .25)}${statc(s.applications, 'Откликов и приглашений', .3)}${statc(s.pending, 'Компаний на одобрении', .35)}${statc(s.tickets, 'Открытых обращений', .4)}</div>
+        $('#aov').innerHTML = `<div class="dash" style="margin-top:0"><div class="stats4">${statc(s.users, 'Пользователей', .05, '#users', '')}${statc(s.students, 'Студентов', .1, '#users', 'student')}${statc(s.companies, 'Компаний', .15, '#users', 'company')}${statc(s.unverified, 'Не подтвердили email', .2, '#users', 'unverified')}
+          ${statc(s.vacancies, 'Вакансий', .25, '#vacancies')}${statc(s.applications, 'Откликов и приглашений', .3, '#vacancies')}${statc(s.pending, 'Компаний на одобрении', .35, '#users', 'pending')}${statc(s.tickets, 'Открытых обращений', .4, '#support')}</div>
           <div class="card rise" style="--d:.45s"><h4>Регистрации за 14 дней</h4>${bars(d.series)}</div></div>`;
         watchCounts($('#aov'));
       }
@@ -794,6 +842,11 @@
       }
       let curT = null, pane = null, dq;
       const abox = $('#achat'), aform = $('#aform'), amsgs = $('#amsgs');
+      const reply = useReply(amsgs, aform);
+      $('#adel').onclick = () => openDeleteChat({
+        title: `${$('#aname').textContent} · обращение в поддержку`,
+        onChoose: async scope => { await api(`/api/admin/support/${curT}?scope=${scope}`, { method: 'DELETE' }); toast(scope === 'both' ? 'Обращение удалено у обоих' : 'Обращение удалено у вас'); $('#alist').dataset.h = ''; await openThread(null); }
+      });
       async function threads() {
         const ts = await api('/api/admin/support');
         const html = ts.length ? ts.map(t => `<a class="citem ${t.id === curT ? 'active' : ''}" href="#support" data-t="${t.id}"><b>${t.last_staff === false && t.status === 'open' ? '● ' : ''}${esc(t.name)}</b><small>${t.status === 'closed' ? 'закрыто' : 'открыто'} · ${ago(t.updated_at)}${t.role === 'company' && !t.approved ? ' · на одобрении' : ''}</small><span>${esc(t.last_text || '')}</span></a>`).join('') : '<p class="empty" style="padding:28px 16px">Обращений пока нет</p>';
@@ -808,7 +861,7 @@
           <button class="btn ${c.approved ? '' : 'primary'} sm" id="acomp-btn" data-uid="${d.user_id}" data-ap="${c.approved ? 0 : 1}">${c.approved ? 'Отозвать доступ' : 'Одобрить компанию'}</button>`;
       };
       async function openThread(id) {
-        curT = id; $('#acomp').hidden = true; abox.classList.toggle('open', !!id); aform.hidden = !id; $('#astatus').hidden = !id;
+        curT = id; $('#acomp').hidden = true; abox.classList.toggle('open', !!id); aform.hidden = !id; $('#astatus').hidden = !id; $('#adel').hidden = !id; reply.clear();
         if (!id) { pane = null; amsgs.innerHTML = '<p class="empty">Выберите обращение слева</p>'; $('#aname').textContent = 'Выберите обращение'; $('#amail').textContent = ''; return threads(); }
         pane = mkPane(amsgs, `/api/admin/support/${id}/messages`, '<p class="empty">Сообщений нет</p>');
         const d = await pane(true); headInfo(d); threads();
@@ -826,7 +879,7 @@
       $('#aback').onclick = e => { e.preventDefault(); openThread(null); };
       aform.addEventListener('submit', async e => {
         e.preventDefault(); const t = aform.elements.text.value.trim(); if (!t) return; aform.elements.text.value = '';
-        try { await api(`/api/admin/support/${curT}/messages`, { method: 'POST', body: { text: t } }); await pane(false); threads(); } catch (err) { fail(err); aform.elements.text.value = t; }
+        try { await api(`/api/admin/support/${curT}/messages`, { method: 'POST', body: { text: t, reply_to: reply.get() } }); reply.clear(); await pane(false); threads(); } catch (err) { fail(err); aform.elements.text.value = t; }
       });
       $('#astatus').onclick = async () => { try { await api(`/api/admin/support/${curT}/status`, { method: 'POST', body: { status: 'closed' } }); toast('Обращение закрыто'); threads(); } catch (err) { fail(err); } };
       $('#uq').addEventListener('input', () => { clearTimeout(dq); dq = setTimeout(() => users().catch(fail), 280); });
@@ -845,6 +898,7 @@
           toast('Готово ✓'); a === 'delvac' ? vacs() : users();
         } catch (err) { fail(err); }
       });
+      document.addEventListener('click', e => { const a = e.target.closest('.stat-link'); if (a && a.dataset.role !== undefined) { $('#urole').value = a.dataset.role; $('#uq').value = ''; } });
       initTabs(n => { ({ overview, users, vacancies: vacs, support: threads }[n])().catch(fail); });
       setInterval(() => { if (!document.hidden && $('[data-pane=support]') && !$('[data-pane=support]').hidden) { threads().catch(() => {}); pane?.(false).catch(() => {}); } }, 4000);
     }

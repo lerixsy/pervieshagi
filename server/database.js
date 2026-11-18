@@ -87,6 +87,12 @@ CREATE TABLE IF NOT EXISTS interviews (
   status TEXT DEFAULT 'proposed', created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_iv_app ON interviews(application_id);
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to INTEGER;
+ALTER TABLE support_messages ADD COLUMN IF NOT EXISTS reply_to INTEGER;
+CREATE TABLE IF NOT EXISTS chat_state (
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, kind TEXT NOT NULL, ref_id INTEGER NOT NULL,
+  cleared_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (user_id, kind, ref_id)
+);
 CREATE INDEX IF NOT EXISTS idx_support_msgs ON support_messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_apps_user ON applications(user_id);
 CREATE INDEX IF NOT EXISTS idx_apps_vacancy ON applications(vacancy_id);

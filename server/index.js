@@ -500,37 +500,69 @@ const chatApp = async (req, res) => {
   if (!ok) { res.status(404).json({ error: 'Чат недоступен' }); return null; }
   return a;
 };
+const CLR_APP = "COALESCE((SELECT cleared_at FROM chat_state WHERE user_id = $3 AND kind = 'app' AND ref_id = $1), '-infinity')";
+const clearFor = (uid, kind, ref) => query(`INSERT INTO chat_state (user_id, kind, ref_id, cleared_at) VALUES ($1,$2,$3, now())
+  ON CONFLICT (user_id, kind, ref_id) DO UPDATE SET cleared_at = now()`, [uid, kind, ref]);
 app.get('/api/chats', auth, h(async (req, res) => res.json(await query(`SELECT * FROM (
   SELECT a.id, a.user_id, a.created_at, v.id AS vacancy_id, v.title, v.company, v.company_id, p.full_name,
-    (SELECT text FROM messages m WHERE m.application_id = a.id ORDER BY m.id DESC LIMIT 1) AS last_text,
-    (SELECT created_at FROM messages m WHERE m.application_id = a.id ORDER BY m.id DESC LIMIT 1) AS last_at
+    (SELECT text FROM messages m WHERE m.application_id = a.id AND m.created_at > COALESCE(cs.cleared_at, '-infinity') ORDER BY m.id DESC LIMIT 1) AS last_text,
+    (SELECT created_at FROM messages m WHERE m.application_id = a.id AND m.created_at > COALESCE(cs.cleared_at, '-infinity') ORDER BY m.id DESC LIMIT 1) AS last_at
   FROM applications a JOIN vacancies v ON v.id = a.vacancy_id LEFT JOIN profiles p ON p.user_id = a.user_id
+  LEFT JOIN chat_state cs ON cs.user_id = $1 AND cs.kind = 'app' AND cs.ref_id = a.id
   WHERE (a.user_id = $1 OR v.company_id = $1) AND v.company_id IS NOT NULL AND a.status <> 'declined'
-    AND (a.direction = 'student_to_company' OR a.status = 'accepted')) t
+    AND (a.direction = 'student_to_company' OR a.status = 'accepted')
+    AND (cs.cleared_at IS NULL OR EXISTS (SELECT 1 FROM messages m2 WHERE m2.application_id = a.id AND m2.created_at > cs.cleared_at))) t
   ORDER BY COALESCE(last_at, created_at) DESC`, [req.uid]))));
 app.get('/api/chats/:id/messages', auth, h(async (req, res) => {
   const a = await chatApp(req, res); if (!a) return;
-  const rows = await query('SELECT id, sender_id, text, created_at FROM messages WHERE application_id = $1 AND id > $2 ORDER BY id', [a.id, num(req.query.after)]);
-  res.json({ title: a.title, company: a.company, company_id: a.company_id, student_id: a.user_id, student: await nameOf(a.user_id), items: rows.map(m => ({ id: m.id, text: m.text, created_at: m.created_at, mine: m.sender_id === req.uid })) });
+  const rows = await query(`SELECT m.id, m.sender_id, m.text, m.created_at, m.reply_to, r.text AS reply_text, r.sender_id AS reply_sender
+    FROM messages m LEFT JOIN messages r ON r.id = m.reply_to AND r.application_id = m.application_id AND r.created_at > ${CLR_APP}
+    WHERE m.application_id = $1 AND m.id > $2 AND m.created_at > ${CLR_APP} ORDER BY m.id`, [a.id, num(req.query.after), req.uid]);
+  res.json({ title: a.title, company: a.company, company_id: a.company_id, student_id: a.user_id, student: await nameOf(a.user_id),
+    items: rows.map(m => ({ id: m.id, text: m.text, created_at: m.created_at, mine: m.sender_id === req.uid,
+      reply_id: m.reply_to || null, reply_text: m.reply_text ? m.reply_text.slice(0, 140) : null, reply_mine: m.reply_sender === req.uid })) });
 }));
 app.post('/api/chats/:id/messages', auth, approved, verified, h(async (req, res) => {
   const a = await chatApp(req, res); if (!a) return;
   const text = clean(req.body?.text, 1000);
   if (!text) return res.status(400).json({ error: 'Пустое сообщение' });
   if (!limit('cm:' + req.uid, 30, 60000)) return tooMany(res);
-  await query('INSERT INTO messages (application_id, sender_id, text) VALUES ($1,$2,$3)', [a.id, req.uid, text]);
+  let replyTo = null;
+  if (req.body?.reply_to) { const r = await one('SELECT id FROM messages WHERE id = $1 AND application_id = $2', [num(req.body.reply_to), a.id]); replyTo = r ? r.id : null; }
+  await query('INSERT INTO messages (application_id, sender_id, text, reply_to) VALUES ($1,$2,$3,$4)', [a.id, req.uid, text, replyTo]);
   const isStudent = req.uid === a.user_id, to = isStudent ? a.company_id : a.user_id, link = `/pages/chat.html#${a.id}`;
   if (!(await one('SELECT 1 FROM notifications WHERE user_id = $1 AND link = $2 AND is_read = false', [to, link])))
     await notify(to, `Новое сообщение от ${isStudent ? await nameOf(req.uid) : a.company}: «${a.title}»`, link);
   res.json({ ok: true });
 }));
 
+// удалить чат: scope=me — скрыть у себя, scope=both — стереть переписку у обоих
+app.delete('/api/chats/:id', auth, h(async (req, res) => {
+  const a = await one(`SELECT a.id, a.user_id, v.company_id FROM applications a JOIN vacancies v ON v.id = a.vacancy_id WHERE a.id = $1`, [num(req.params.id)]);
+  if (!a || (a.user_id !== req.uid && a.company_id !== req.uid)) return res.status(404).json({ error: 'Чат не найден' });
+  if (req.query.scope === 'both') {
+    await query('DELETE FROM messages WHERE application_id = $1', [a.id]);
+    await clearFor(a.user_id, 'app', a.id); if (a.company_id) await clearFor(a.company_id, 'app', a.id);
+  } else await clearFor(req.uid, 'app', a.id);
+  res.json({ ok: true });
+}));
+
 // ---------- поддержка ----------
-const supItems = (rows, mineStaff) => rows.map(m => ({ id: m.id, text: m.text, created_at: m.created_at, mine: m.is_staff === mineStaff }));
+const CLR_SUP = "COALESCE((SELECT cleared_at FROM chat_state WHERE user_id = $3 AND kind = 'support' AND ref_id = $1), '-infinity')";
+const SUPQ = `SELECT m.id, m.sender_id, m.is_staff, m.text, m.created_at, m.reply_to, r.text AS reply_text, r.is_staff AS reply_staff
+  FROM support_messages m LEFT JOIN support_messages r ON r.id = m.reply_to AND r.thread_id = m.thread_id AND r.created_at > ${CLR_SUP}
+  WHERE m.thread_id = $1 AND m.id > $2 AND m.created_at > ${CLR_SUP} ORDER BY m.id`;
+const supItems = (rows, mineStaff) => rows.map(m => ({ id: m.id, text: m.text, created_at: m.created_at, mine: m.is_staff === mineStaff,
+  reply_id: m.reply_to || null, reply_text: m.reply_text ? m.reply_text.slice(0, 140) : null, reply_mine: m.reply_to ? m.reply_staff === mineStaff : false }));
+const supReply = async (body, threadId) => {
+  if (!body?.reply_to) return null;
+  const r = await one('SELECT id FROM support_messages WHERE id = $1 AND thread_id = $2', [num(body.reply_to), threadId]);
+  return r ? r.id : null;
+};
 app.get('/api/support/messages', ...[auth], h(async (req, res) => {
   if (req.role === 'admin') return res.status(403).json({ error: 'Используйте админ-панель' });
   const t = await one('SELECT id FROM support_threads WHERE user_id = $1', [req.uid]);
-  const rows = t ? await query('SELECT * FROM support_messages WHERE thread_id = $1 AND id > $2 ORDER BY id', [t.id, num(req.query.after)]) : [];
+  const rows = t ? await query(SUPQ, [t.id, num(req.query.after), req.uid]) : [];
   res.json({ items: supItems(rows, false) });
 }));
 app.post('/api/support/messages', auth, h(async (req, res) => {
@@ -539,7 +571,7 @@ app.post('/api/support/messages', auth, h(async (req, res) => {
   if (!text) return res.status(400).json({ error: 'Пустое сообщение' });
   if (!limit('sm:' + req.uid, 20, 60000)) return tooMany(res);
   const t = await one(`INSERT INTO support_threads (user_id) VALUES ($1) ON CONFLICT (user_id) DO UPDATE SET status = 'open', updated_at = now() RETURNING id`, [req.uid]);
-  await query('INSERT INTO support_messages (thread_id, sender_id, is_staff, text) VALUES ($1,$2,false,$3)', [t.id, req.uid, text]);
+  await query('INSERT INTO support_messages (thread_id, sender_id, is_staff, text, reply_to) VALUES ($1,$2,false,$3,$4)', [t.id, req.uid, text, await supReply(req.body, t.id)]);
   const who = (await one(`SELECT COALESCE(p.full_name, c.name, u.email) AS n FROM users u LEFT JOIN profiles p ON p.user_id = u.id LEFT JOIN companies c ON c.user_id = u.id WHERE u.id = $1`, [req.uid])).n;
   for (const a of await query(`SELECT id FROM users WHERE role = 'admin'`)) {
     if (!(await one(`SELECT 1 FROM notifications WHERE user_id = $1 AND link = '/pages/admin.html#support' AND is_read = false`, [a.id])))
@@ -550,10 +582,10 @@ app.post('/api/support/messages', auth, h(async (req, res) => {
 
 // ---------- админ-панель ----------
 app.get('/api/admin/users', ...admin, h(async (req, res) => {
-  const q = String(req.query.q || '').slice(0, 60), role = ['student', 'company', 'admin', 'pending'].includes(req.query.role) ? req.query.role : '';
+  const q = String(req.query.q || '').slice(0, 60), role = ['student', 'company', 'admin', 'pending', 'unverified'].includes(req.query.role) ? req.query.role : '';
   res.json(await query(`SELECT u.id, u.email, u.role, u.email_verified, u.is_blocked, u.created_at, COALESCE(p.full_name, c.name) AS name, c.approved
     FROM users u LEFT JOIN profiles p ON p.user_id = u.id LEFT JOIN companies c ON c.user_id = u.id
-    WHERE ($1 = '' OR lower(u.email) LIKE $2 OR lower(COALESCE(p.full_name, c.name, '')) LIKE $2) AND ($3 = '' OR u.role = $3 OR ($3 = 'pending' AND u.role = 'company' AND c.approved = false))
+    WHERE ($1 = '' OR lower(u.email) LIKE $2 OR lower(COALESCE(p.full_name, c.name, '')) LIKE $2) AND ($3 = '' OR u.role = $3 OR ($3 = 'pending' AND u.role = 'company' AND c.approved = false) OR ($3 = 'unverified' AND NOT u.email_verified))
     ORDER BY u.id DESC LIMIT 100`, [q, '%' + q.toLowerCase() + '%', role]));
 }));
 const target = async (req, res) => {
@@ -588,23 +620,32 @@ app.get('/api/admin/vacancies', ...admin, h(async (req, res) => res.json(await q
   (SELECT COUNT(*)::int FROM applications a WHERE a.vacancy_id = v.id) AS responses FROM vacancies v ORDER BY v.id DESC LIMIT 200`))));
 app.delete('/api/admin/vacancies/:id', ...admin, h(async (req, res) => { await query('DELETE FROM vacancies WHERE id = $1', [num(req.params.id)]); res.json({ ok: true }); }));
 app.get('/api/admin/support', ...admin, h(async (req, res) => res.json(await query(`SELECT t.id, t.status, t.updated_at, u.email, u.role, c.approved, COALESCE(p.full_name, c.name, u.email) AS name,
-  (SELECT text FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_text,
-  (SELECT is_staff FROM support_messages m WHERE m.thread_id = t.id ORDER BY m.id DESC LIMIT 1) AS last_staff
+  (SELECT text FROM support_messages m WHERE m.thread_id = t.id AND m.created_at > COALESCE(cs.cleared_at, '-infinity') ORDER BY m.id DESC LIMIT 1) AS last_text,
+  (SELECT is_staff FROM support_messages m WHERE m.thread_id = t.id AND m.created_at > COALESCE(cs.cleared_at, '-infinity') ORDER BY m.id DESC LIMIT 1) AS last_staff
   FROM support_threads t JOIN users u ON u.id = t.user_id LEFT JOIN profiles p ON p.user_id = u.id LEFT JOIN companies c ON c.user_id = u.id
-  ORDER BY t.updated_at DESC LIMIT 100`))));
+  LEFT JOIN chat_state cs ON cs.user_id = $1 AND cs.kind = 'support' AND cs.ref_id = t.id
+  WHERE cs.cleared_at IS NULL OR EXISTS (SELECT 1 FROM support_messages m2 WHERE m2.thread_id = t.id AND m2.created_at > cs.cleared_at)
+  ORDER BY t.updated_at DESC LIMIT 100`, [req.uid]))));
 app.get('/api/admin/support/:id/messages', ...admin, h(async (req, res) => {
   const t = await one(`SELECT t.id, u.id AS user_id, u.email, u.role, c.name AS cname, c.industry, c.city, c.website, c.approved FROM support_threads t JOIN users u ON u.id = t.user_id LEFT JOIN companies c ON c.user_id = u.id WHERE t.id = $1`, [num(req.params.id)]);
   if (!t) return res.status(404).json({ error: 'Обращение не найдено' });
-  res.json({ email: t.email, role: t.role, user_id: t.user_id, company: t.role === 'company' ? { name: t.cname, industry: t.industry, city: t.city, website: t.website, approved: t.approved } : null, items: supItems(await query('SELECT * FROM support_messages WHERE thread_id = $1 AND id > $2 ORDER BY id', [t.id, num(req.query.after)]), true) });
+  res.json({ email: t.email, role: t.role, user_id: t.user_id, company: t.role === 'company' ? { name: t.cname, industry: t.industry, city: t.city, website: t.website, approved: t.approved } : null, items: supItems(await query(SUPQ, [t.id, num(req.query.after), req.uid]), true) });
 }));
 app.post('/api/admin/support/:id/messages', ...admin, h(async (req, res) => {
   const t = await one('SELECT id, user_id FROM support_threads WHERE id = $1', [num(req.params.id)]);
   const text = clean(req.body?.text, 1000);
   if (!t || !text) return res.status(400).json({ error: 'Пустое сообщение' });
-  await query('INSERT INTO support_messages (thread_id, sender_id, is_staff, text) VALUES ($1,$2,true,$3)', [t.id, req.uid, text]);
+  await query('INSERT INTO support_messages (thread_id, sender_id, is_staff, text, reply_to) VALUES ($1,$2,true,$3,$4)', [t.id, req.uid, text, await supReply(req.body, t.id)]);
   await query(`UPDATE support_threads SET updated_at = now(), status = 'open' WHERE id = $1`, [t.id]);
   if (!(await one(`SELECT 1 FROM notifications WHERE user_id = $1 AND link = '/pages/support.html' AND is_read = false`, [t.user_id])))
     await notify(t.user_id, 'Поддержка ответила на ваше обращение', '/pages/support.html');
+  res.json({ ok: true });
+}));
+app.delete('/api/admin/support/:id', ...admin, h(async (req, res) => {
+  const id = num(req.params.id);
+  if (!(await one('SELECT 1 FROM support_threads WHERE id = $1', [id]))) return res.status(404).json({ error: 'Обращение не найдено' });
+  if (req.query.scope === 'both') { await query('DELETE FROM support_threads WHERE id = $1', [id]); await query(`DELETE FROM chat_state WHERE kind = 'support' AND ref_id = $1`, [id]); }
+  else await clearFor(req.uid, 'support', id);
   res.json({ ok: true });
 }));
 app.post('/api/admin/support/:id/status', ...admin, h(async (req, res) => {
